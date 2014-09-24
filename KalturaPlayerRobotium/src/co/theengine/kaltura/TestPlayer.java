@@ -95,6 +95,15 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	}
 	
 	/**
+	 * Play the stream from the specified menu item.
+	 */
+	private void playStream(String itemStream) {
+		solo.clickOnMenuItem("Streams");
+		sleep(500);
+		solo.clickOnMenuItem(itemStream, true);
+	}
+	
+	/**
 	 * Test the provided stream menu option with screenshots and pause testing.
 	 * @param itemStream	Menu option name to test.
 	 */
@@ -103,7 +112,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		
 		screenshot();
 		
-		solo.clickOnMenuItem(itemStream);
+		playStream(itemStream);
 		
 		for (int i = 0; i < 5; i++) {
 			sleep(5000);
@@ -138,7 +147,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	 * Test seeking forward and backward on the provided stream menu item.
 	 */
 	private void seekTest(String itemStream) {
-		solo.clickOnMenuItem(itemStream);
+		playStream(itemStream);
 
 		screenshot();
 		sleep(3000);
@@ -181,7 +190,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	public void testABC() {
 		streamTest("ABC DVR");
 	}
-	
+
 	/**
 	 * Test the Kaltura video on demand via the menu option.
 	 */
@@ -190,28 +199,50 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	}
 
 	/**
+	 * Test the Folgers stream.
+	 */
+	public void testFolgers() {
+		streamTest("Folgers");
+	}
+
+	/**
+	 * Test the alternate audio VOD stream.
+	 */
+	public void testVODAltAudio() {
+		streamTest("VOD Alt Audio");
+	}
+	
+	public void testBibbop() {
+		streamTest("Bibbop");
+	}
+
+	public void testAESVOD() {
+		streamTest("AES VOD");
+	}
+
+	/**
 	 * Test switching between ABC and Kaltura streams.
 	 */
 	public void testSwitch() {
-		solo.clickOnMenuItem("ABC DVR");
+		playStream("ABC DVR");
 
 		screenshot();
 		sleep(5000);
 		screenshot();
 		
-		solo.clickOnMenuItem("Kaltura VoD");
+		playStream("Kaltura VoD");
 
 		screenshot();
 		sleep(5000);
 		screenshot();
 		
-		solo.clickOnMenuItem("ABC DVR");
+		playStream("ABC DVR");
 		
 		screenshot();
 		sleep(5000);
 		screenshot();
 		
-		solo.clickOnMenuItem("Kaltura VoD");
+		playStream("Kaltura VoD");
 		
 		screenshot();
 		sleep(5000);
@@ -232,9 +263,25 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		seekTest("Kaltura VoD");
 	}
 	
+	public void testFolgersSeek() {
+		seekTest("Folgers");
+	}
+
+	public void testVODAltAudioSeek() {
+		seekTest("VOD Alt Audio");
+	}
+	
+	public void testBibbopSeek() {
+		seekTest("Bibbop");
+	}
+	
+	public void testAESVODSeek() {
+		seekTest("AES VOD");
+	}
+	
 	private void streamRunTest(String itemStream) {
 		screenshot();
-		solo.clickOnMenuItem(itemStream);
+		playStream(itemStream);
 		screenshot();
 		sleep(2000);
 		screenshot();
@@ -270,7 +317,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		sleep(1000);
 		screenshot();
 		
-		solo.clickOnMenuItem("ABC DVR");
+		playStream("ABC DVR");
 		screenshot();
 		
 		sleep(2000);
