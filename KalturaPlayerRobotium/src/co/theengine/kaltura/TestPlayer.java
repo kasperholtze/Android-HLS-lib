@@ -86,12 +86,19 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		}
 		//*/
 	}
-	
+
 	/**
 	 * Sleep for the provided amount of milliseconds.
 	 */
 	private void sleep(int time) {
 		solo.sleep(time);
+	}
+	
+	/**
+	 * Toggle pause state on the stream.
+	 */
+	private void togglePause() {
+		solo.clickOnMenuItem("Play/Pause");
 	}
 	
 	/**
@@ -108,7 +115,6 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	 * @param itemStream	Menu option name to test.
 	 */
 	private void streamTest(String itemStream) {
-		String itemPause = "Play/Pause";
 		
 		screenshot();
 		
@@ -119,8 +125,8 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 			screenshot();
 		}
 		
-		solo.clickOnMenuItem(itemPause);
-
+		togglePause();
+		
 		screenshot();
 		sleep(2500);
 
@@ -129,7 +135,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 
 		screenshot();
 		
-		solo.clickOnMenuItem(itemPause);
+		togglePause();
 
 		screenshot();
 		sleep(2500);
@@ -221,6 +227,27 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	}
 
 	/**
+	 * Test playing a stream again after playing it the first time.
+	 */
+	public void testPlayTwice() {
+		playStream("ABC DVR");
+
+		screenshot();
+		sleep(2500);
+		screenshot();
+		sleep(2500);
+		screenshot();
+
+		playStream("ABC DVR");
+
+		screenshot();
+		sleep(2500);
+		screenshot();
+		sleep(2500);
+		screenshot();
+	}
+
+	/**
 	 * Test switching between ABC and Kaltura streams.
 	 */
 	public void testSwitch() {
@@ -249,6 +276,29 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		screenshot();
 	}
 
+	/**
+	 * Test playing a stream after pausing the previous one.
+	 */
+	public void testPlayAfterPause() {
+		playStream("Kaltura VoD");
+
+		screenshot();
+		sleep(5000);
+		screenshot();
+		
+		togglePause();
+		
+		screenshot();
+		sleep(3000);
+		screenshot();
+		
+		playStream("Folgers");
+
+		screenshot();
+		sleep(5000);
+		screenshot();
+	}
+	
 	/**
 	 * Test seeking forward and backward on the ABC DVR stream.
 	 */

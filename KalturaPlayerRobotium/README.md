@@ -17,3 +17,5 @@ It should ask you where to run the tests, make sure you have the Kaltura player 
 After running, you should get a "JUnit" tab with all the tests listed, where you'll get status reports on each test as they're run and where you can Run or Debug each individual test as well:
 
 ![JUnit tests](docs/tests.png)
+
+You can also place the keyboard cursor over a test function name and only that test will get run if you press your debug/run key/button.
