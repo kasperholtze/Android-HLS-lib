@@ -111,6 +111,15 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	}
 	
 	/**
+	 * Test the provided stream menu option by just playing it for a while.
+	 * @param itemStream	Menu option name to test.
+	 */
+	private void playTest(String itemStream) {
+		playStream(itemStream);
+		sleep(60000);
+	}
+	
+	/**
 	 * Test the provided stream menu option with screenshots and pause testing.
 	 * @param itemStream	Menu option name to test.
 	 */
@@ -188,6 +197,13 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		screenshot();
 		sleep(2000);
 		screenshot();
+	}
+
+	/**
+	 * Test the playback of Kaltura video on demand via the menu option.
+	 */
+	public void testPlayKalturaVOD() {
+		playTest("Kaltura VoD");
 	}
 	
 	/**
