@@ -116,7 +116,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	 * @param itemStream	Menu option name to test.
 	 */
 	private void playTest(String itemStream) {
-		playStream(itemStream);
+		if (itemStream != "") playStream(itemStream);
 
 		screenshot();
 		for (int i = 0; i < 4; i++) {
@@ -220,6 +220,13 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		screenshot();
 		sleep(2000);
 		screenshot();
+	}
+	
+	/**
+	 * Test the playback of an already playing video that was started externally.
+	 */
+	public void testAutoPlay() {
+		playTest("");
 	}
 
 	/**
