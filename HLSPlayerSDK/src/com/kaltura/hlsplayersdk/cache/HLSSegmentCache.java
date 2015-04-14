@@ -147,7 +147,9 @@ public class HLSSegmentCache
 		{
 			Log.i("HLS Cache", "Initializing concurrent hash map.");
 			segmentCache = new ConcurrentHashMap<String, SegmentCacheEntry>();
-			context = HLSPlayerViewController.currentController.getContext();
+			context = null;
+			if(HLSPlayerViewController.currentController != null)
+				context = HLSPlayerViewController.currentController.getContext();
 			if (context == null) Log.e("HLS Cache", "Context is null!!!");
 		}
 	}
@@ -317,7 +319,8 @@ public class HLSSegmentCache
 			if (segmentsWaiting)
 			{
 				Log.i("HLS Cache", "Progress=" + (int)pct + " (" + curBytes +"/" + totalBytes + ") seg count=" + segmentsWaitingCount);
-				HLSPlayerViewController.currentController.postProgressUpdate((int)pct);
+				if(HLSPlayerViewController.currentController != null)
+					HLSPlayerViewController.currentController.postProgressUpdate((int)pct);
 			}
 
 		}
