@@ -867,7 +867,7 @@ bool HLSPlayer::InitSources()
 	{
 		LOGI("   - taking 4.x path");
 		LOGI("OMXCodec::Create - format=%p track=%p videoSource=%p", vidFormat.get(), mVideoTrack.get(), mVideoSource.get());
-		mVideoSource = OMXCodec::Create(iomx, vidFormat, false, mVideoTrack, NULL, 0);
+		mVideoSource = OMXCodec::Create(iomx, vidFormat, false, mVideoTrack, "OMX.google.h264.decoder", 0);
 		LOGI("   - got %p back", mVideoSource.get());
 	}
 	else
@@ -875,7 +875,7 @@ bool HLSPlayer::InitSources()
 		LOGV("   - taking 2.3 path");
 
 		LOGV("OMXCodec::Create - format=%p track=%p videoSource=%p", vidFormat.get(), mVideoTrack23.get(), mVideoSource23.get());
-		mVideoSource23 = OMXCodec::Create23(iomx, vidFormat, false, mVideoTrack23, NULL, 0);
+		mVideoSource23 = OMXCodec::Create23(iomx, vidFormat, false, mVideoTrack23,  "OMX.google.h264.decoder", 0);
 		LOGV("   - got %p back", mVideoSource23.get());
 	}
 	
@@ -1271,6 +1271,11 @@ int HLSPlayer::Update()
 				}
 				LOGI("End Of Stream: No additional sources detected");
 				SetState(WAITING_ON_DATA);
+				return -1;
+				break;
+			case ERROR_MALFORMED:
+				LOGE("Decoder reported malformed stream, aborting.");
+				SetState(STOPPED);
 				return -1;
 				break;
 			default:
@@ -1795,16 +1800,16 @@ bool HLSPlayer::RenderBuffer(MediaBuffer* buffer)
 		if (ANativeWindow_lock(mWindow, &windowBuffer, NULL) == 0)
 		{
 			// Sanity check on relative dimensions
-			if(windowBuffer.height < videoBufferHeight)
+			if(windowBuffer.height != videoBufferHeight || windowBuffer.width != videoBufferWidth)
 			{
-				LOGE("Aborting conversion; window too short for video!");
+				LOGE("Aborting conversion; window wrong size for video! Queueing resize...");
 				ANativeWindow_unlockAndPost(mWindow);
 				sched_yield();
 				mHeight = videoBufferHeight;
+				mWidth = videoBufferWidth;
 				NoteHWRendererMode(mUseOMXRenderer, mWidth, mHeight, 4);
 				return true;
 			}
-
 
 			LOGRENDER("buffer locked (%d x %d stride=%d, format=%d)", windowBuffer.width, windowBuffer.height, windowBuffer.stride, windowBuffer.format);
 
@@ -2070,6 +2075,11 @@ void HLSPlayer::LogState()
 {
 	LOGTRACE("%s", __func__);
 	AutoLock locker(&lock, __func__);
+
+	static int lastLogged = -1;
+	if(mStatus == lastLogged)
+		return;
+	lastLogged = mStatus;
 
 	switch (mStatus)
 	{
