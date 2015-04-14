@@ -25,7 +25,7 @@ public class ManifestPlaylist extends BaseManifestItem {
 		int firstQuoteIndex = input.indexOf('"');
 		int endIndex = firstCommaIndex > -1 ? firstCommaIndex : input.length() + 1;
 		
-		String key = input.substring( 0, firstEqualSignIndex );
+		String key = input.substring( 0, firstEqualSignIndex ).trim();
 		String value;
 		
 		if ( firstEqualSignIndex == -1 )
@@ -47,8 +47,11 @@ public class ManifestPlaylist extends BaseManifestItem {
 		
 		setProperty( key, value );
 		
-		String newInput = input.substring( endIndex + 1 );
-		if ( newInput.length() > 0 ) parseKeyPairs( newInput );
+		if (endIndex + 1 < input.length())
+		{
+			String newInput = input.substring( endIndex + 1 );
+			if ( newInput.length() > 0 ) parseKeyPairs( newInput );
+		}
 	}
 	
 	private void setProperty(String propertyName, String value)
@@ -69,6 +72,7 @@ public class ManifestPlaylist extends BaseManifestItem {
 		else if (propertyName.equals("NAME"))
 		{
 			this.name = value;
+			if (this.language.length() == 0) this.language = value;
 		}
 		else if (propertyName.equals("AUTOSELECT"))
 		{

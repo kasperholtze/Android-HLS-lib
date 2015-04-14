@@ -21,6 +21,39 @@
 
 #include "debug.h"
 
+#include "HLSSegmentCache.h"
+
+// Handy pthreads autolocker.
+class AutoLock
+{
+public:
+    AutoLock(pthread_mutex_t * lock, const char* path="")
+    : lock(lock), mPath(path)
+    {
+        LOGTHREAD("Locking mutex %p, %s", lock, path);
+        pthread_mutex_lock(lock);
+    }
+
+    ~AutoLock()
+    {
+        LOGTHREAD("Unlocking mutex %p, %s", lock, mPath);
+        pthread_mutex_unlock(lock);
+    }
+
+private:
+    pthread_mutex_t * lock;
+    const char* mPath;
+};
+
+inline int initRecursivePthreadMutex(pthread_mutex_t *lock)
+{
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    return pthread_mutex_init(lock, &attr);
+}
+
+
 /******************************************************************************
 
     Android Video Compatibility Shim
@@ -268,7 +301,7 @@ namespace android_video_shim
         OMX_TI_COLOR_FormatYUV420PackedSemiPlanar = 0x7F000100,
         OMX_QCOM_COLOR_FormatYVU420SemiPlanar = 0x7FA30C00,
         QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka = 0x7fa30c03,
-        OMX_QCOM_COLOR_FormatYUV420PackedSemiPlanar32m = 0x7fa30c04,
+        OMX_QCOM_COLOR_FormatYUV420PackedSemiPlanar32m4ka = 0x7fa30c04,
 
         OMX_COLOR_FormatMax = 0x7FFFFFFF
     } OMX_COLOR_FORMATTYPE;
@@ -320,7 +353,7 @@ namespace android_video_shim
         {
             typedef void (*localFuncCast)(void *thiz, void *id);
             localFuncCast lfc = (localFuncCast)searchSymbol("_ZNK7android7RefBase9incStrongEPKv");
-            LOGV2("RefBase - Inc'ing this=%p id=%p func=%p", (void*)this, id, lfc);
+            LOGREFBASE("RefBase - Inc'ing this=%p id=%p func=%p", (void*)this, id, lfc);
             assert(lfc);
             lfc(this, id);
         }
@@ -329,15 +362,61 @@ namespace android_video_shim
         {
             typedef void (*localFuncCast)(void *thiz, void *id);
             localFuncCast lfc = (localFuncCast)searchSymbol("_ZNK7android7RefBase9decStrongEPKv");
-            LOGV2("RefBase - Dec'ing this=%p id=%p func=%p", (void*)this, id, lfc);
+            LOGREFBASE("RefBase - Dec'ing this=%p id=%p func=%p", (void*)this, id, lfc);
             assert(lfc);
             lfc(this, id);
         }
 
-        RefBase()
+        class weakref_type
+        {
+        public:
+            RefBase*            refBase() const;
+
+            void                incWeak(void* id)
+            {
+                typedef void (*localFuncCast)(void *thiz, void *id);
+                localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android7RefBase12weakref_type7incWeakEPKv");
+                LOGREFBASE("RefBase::weakref_type - incWeak this=%p id=%p func=%p", (void*)this, id, lfc);
+                assert(lfc);
+                lfc(this, id);
+
+            }
+            void                decWeak(void* id)
+            {
+                typedef void (*localFuncCast)(void *thiz, void *id);
+                localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android7RefBase12weakref_type7decWeakEPKv");
+                LOGREFBASE("RefBase::weakref_type - decWeak this=%p id=%p func=%p", (void*)this, id, lfc);
+                assert(lfc);
+                lfc(this, id);
+            }
+
+            // acquires a strong reference if there is already one.
+            bool                attemptIncStrong(void* id)
+            {
+                typedef bool (*localFuncCast)(void *thiz, void *id);
+                localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android7RefBase12weakref_type16attemptIncStrongEPKv");
+                LOGREFBASE("RefBase::weakref_type - attemptIncStrong this=%p id=%p func=%p", (void*)this, id, lfc);
+                assert(lfc);
+                return lfc(this, id);
+            }
+
+        };
+
+        weakref_type*   createWeak(void* id)
+        {
+            typedef weakref_type* (*localFuncCast)(void *thiz, void *id);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZNK7android7RefBase10createWeakEPKv");
+            LOGREFBASE("RefBase::weakref_type - createWeak this=%p id=%p func=%p", (void*)this, id, lfc);
+            assert(lfc);
+            return lfc(this, id);
+        }
+
+        weakref_type*   getWeakRefs() const;
+
+        RefBase() : mRefs(0)
         {
             // Call our c'tor.
-            LOGV2("RefBase - ctor %p", this);
+            LOGREFBASE("RefBase - ctor %p", this);
             typedef void (*localFuncCast)(void *thiz);
             localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android7RefBaseC2Ev");
             assert(lfc);
@@ -346,6 +425,11 @@ namespace android_video_shim
 
         virtual ~RefBase()
         {
+            LOGREFBASE("RefBase - dtor %p mRefs=%p", this, mRefs);
+            typedef void (*localFuncCast)(void *thiz);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android7RefBaseD2Ev");
+            assert(lfc);
+            lfc(this);
         }
 
         virtual void            onFirstRef() {};
@@ -356,7 +440,274 @@ namespace android_video_shim
         void *mRefs;
     };
 
-    template<typename T> class wp;
+    // ---------------------------------------------------------------------------
+
+    #define COMPARE_WEAK(_op_)                                      \
+    inline bool operator _op_ (const sp<T>& o) const {              \
+        return m_ptr _op_ o.m_ptr;                                  \
+    }                                                               \
+    inline bool operator _op_ (const T* o) const {                  \
+        return m_ptr _op_ o;                                        \
+    }                                                               \
+    template<typename U>                                            \
+    inline bool operator _op_ (const sp<U>& o) const {              \
+        return m_ptr _op_ o.m_ptr;                                  \
+    }                                                               \
+    template<typename U>                                            \
+    inline bool operator _op_ (const U* o) const {                  \
+        return m_ptr _op_ o;                                        \
+    }
+
+    // ---------------------------------------------------------------------------
+
+    template<typename T> class sp;
+
+    template <typename T>
+    class wp
+    {
+    public:
+        typedef typename RefBase::weakref_type weakref_type;
+
+        inline wp() : m_ptr(0), m_refs(0) { }
+
+        wp(T* other);
+        wp(const wp<T>& other);
+        wp(const sp<T>& other);
+        template<typename U> wp(U* other);
+        template<typename U> wp(const sp<U>& other);
+        template<typename U> wp(const wp<U>& other);
+
+        ~wp();
+
+        // Assignment
+
+        wp& operator = (T* other);
+        wp& operator = (const wp<T>& other);
+        wp& operator = (const sp<T>& other);
+
+        template<typename U> wp& operator = (U* other);
+        template<typename U> wp& operator = (const wp<U>& other);
+        template<typename U> wp& operator = (const sp<U>& other);
+
+        void set_object_and_refs(T* other, weakref_type* refs);
+
+        // promotion to sp
+
+        sp<T> promote() const;
+
+        // Reset
+
+        void clear();
+
+        // Accessors
+
+        inline  weakref_type* get_refs() const { return m_refs; }
+
+        inline  T* unsafe_get() const { return m_ptr; }
+
+        // Operators
+
+        COMPARE_WEAK(==)
+        COMPARE_WEAK(!=)
+        COMPARE_WEAK(>)
+        COMPARE_WEAK(<)
+        COMPARE_WEAK(<=)
+        COMPARE_WEAK(>=)
+
+        inline bool operator == (const wp<T>& o) const {
+            return (m_ptr == o.m_ptr) && (m_refs == o.m_refs);
+        }
+        template<typename U>
+        inline bool operator == (const wp<U>& o) const {
+            return m_ptr == o.m_ptr;
+        }
+
+        inline bool operator > (const wp<T>& o) const {
+            return (m_ptr == o.m_ptr) ? (m_refs > o.m_refs) : (m_ptr > o.m_ptr);
+        }
+        template<typename U>
+        inline bool operator > (const wp<U>& o) const {
+            return (m_ptr == o.m_ptr) ? (m_refs > o.m_refs) : (m_ptr > o.m_ptr);
+        }
+
+        inline bool operator < (const wp<T>& o) const {
+            return (m_ptr == o.m_ptr) ? (m_refs < o.m_refs) : (m_ptr < o.m_ptr);
+        }
+        template<typename U>
+        inline bool operator < (const wp<U>& o) const {
+            return (m_ptr == o.m_ptr) ? (m_refs < o.m_refs) : (m_ptr < o.m_ptr);
+        }
+                             inline bool operator != (const wp<T>& o) const { return m_refs != o.m_refs; }
+        template<typename U> inline bool operator != (const wp<U>& o) const { return !operator == (o); }
+                             inline bool operator <= (const wp<T>& o) const { return !operator > (o); }
+        template<typename U> inline bool operator <= (const wp<U>& o) const { return !operator > (o); }
+                             inline bool operator >= (const wp<T>& o) const { return !operator < (o); }
+        template<typename U> inline bool operator >= (const wp<U>& o) const { return !operator < (o); }
+
+    private:
+        template<typename Y> friend class sp;
+        template<typename Y> friend class wp;
+
+        T*              m_ptr;
+        weakref_type*   m_refs;
+    };
+
+	#undef COMPARE_WEAK
+
+    template<typename T>
+    wp<T>::wp(T* other)
+        : m_ptr(other)
+    {
+        if (other) m_refs = other->createWeak(this);
+    }
+
+    template<typename T>
+    wp<T>::wp(const wp<T>& other)
+        : m_ptr(other.m_ptr), m_refs(other.m_refs)
+    {
+        if (m_ptr) m_refs->incWeak(this);
+    }
+
+    template<typename T>
+    wp<T>::wp(const sp<T>& other)
+        : m_ptr(other.m_ptr)
+    {
+        if (m_ptr) {
+            m_refs = m_ptr->createWeak(this);
+        }
+    }
+
+    template<typename T> template<typename U>
+    wp<T>::wp(U* other)
+        : m_ptr(other)
+    {
+        if (other) m_refs = other->createWeak(this);
+    }
+
+    template<typename T> template<typename U>
+    wp<T>::wp(const wp<U>& other)
+        : m_ptr(other.m_ptr)
+    {
+        if (m_ptr) {
+            m_refs = other.m_refs;
+            m_refs->incWeak(this);
+        }
+    }
+
+    template<typename T> template<typename U>
+    wp<T>::wp(const sp<U>& other)
+        : m_ptr(other.m_ptr)
+    {
+        if (m_ptr) {
+            m_refs = m_ptr->createWeak(this);
+        }
+    }
+
+    template<typename T>
+    wp<T>::~wp()
+    {
+        if (m_ptr) m_refs->decWeak(this);
+    }
+
+    template<typename T>
+    wp<T>& wp<T>::operator = (T* other)
+    {
+        weakref_type* newRefs =
+            other ? other->createWeak(this) : 0;
+        if (m_ptr) m_refs->decWeak(this);
+        m_ptr = other;
+        m_refs = newRefs;
+        return *this;
+    }
+
+    template<typename T>
+    wp<T>& wp<T>::operator = (const wp<T>& other)
+    {
+        weakref_type* otherRefs(other.m_refs);
+        T* otherPtr(other.m_ptr);
+        if (otherPtr) otherRefs->incWeak(this);
+        if (m_ptr) m_refs->decWeak(this);
+        m_ptr = otherPtr;
+        m_refs = otherRefs;
+        return *this;
+    }
+
+    template<typename T>
+    wp<T>& wp<T>::operator = (const sp<T>& other)
+    {
+        weakref_type* newRefs =
+            other != NULL ? other->createWeak(this) : 0;
+        T* otherPtr(other.m_ptr);
+        if (m_ptr) m_refs->decWeak(this);
+        m_ptr = otherPtr;
+        m_refs = newRefs;
+        return *this;
+    }
+
+    template<typename T> template<typename U>
+    wp<T>& wp<T>::operator = (U* other)
+    {
+        weakref_type* newRefs =
+            other ? other->createWeak(this) : 0;
+        if (m_ptr) m_refs->decWeak(this);
+        m_ptr = other;
+        m_refs = newRefs;
+        return *this;
+    }
+
+    template<typename T> template<typename U>
+    wp<T>& wp<T>::operator = (const wp<U>& other)
+    {
+        weakref_type* otherRefs(other.m_refs);
+        U* otherPtr(other.m_ptr);
+        if (otherPtr) otherRefs->incWeak(this);
+        if (m_ptr) m_refs->decWeak(this);
+        m_ptr = otherPtr;
+        m_refs = otherRefs;
+        return *this;
+    }
+
+    template<typename T> template<typename U>
+    wp<T>& wp<T>::operator = (const sp<U>& other)
+    {
+        weakref_type* newRefs =
+            other != NULL ? other->createWeak(this) : 0;
+        U* otherPtr(other.m_ptr);
+        if (m_ptr) m_refs->decWeak(this);
+        m_ptr = otherPtr;
+        m_refs = newRefs;
+        return *this;
+    }
+
+    template<typename T>
+    void wp<T>::set_object_and_refs(T* other, weakref_type* refs)
+    {
+        if (other) refs->incWeak(this);
+        if (m_ptr) m_refs->decWeak(this);
+        m_ptr = other;
+        m_refs = refs;
+    }
+
+    template<typename T>
+    sp<T> wp<T>::promote() const
+    {
+        sp<T> result;
+        if (m_ptr && m_refs->attemptIncStrong(&result)) {
+            result.set_pointer(m_ptr);
+        }
+        return result;
+    }
+
+    template<typename T>
+    void wp<T>::clear()
+    {
+        if (m_ptr) {
+            m_refs->decWeak(this);
+            m_ptr = 0;
+        }
+    }
+
+
     // ---------------------------------------------------------------------------
     #define COMPARE(_op_)                                           \
     inline bool operator _op_ (const sp<T>& o) const {              \
@@ -532,6 +883,45 @@ namespace android_video_shim
             return lfc(this);
         }
     };
+    
+    /* Can't use VideoRenderer, as it assumes local access to DSP RAM.
+       IOMXRenderer proxies it in correct memory space.
+
+    class VideoRenderer
+    {
+    public:
+        virtual ~VideoRenderer() {}
+        virtual void render(
+                const void *data, size_t size, void *platformPrivate) = 0;
+
+    protected:
+        VideoRenderer() {}
+        VideoRenderer(const VideoRenderer &);
+        VideoRenderer &operator=(const VideoRenderer &);
+    };
+
+    inline VideoRenderer *instantiateSoftwareRenderer(OMX_COLOR_FORMATTYPE colorFormat,
+            const sp<ISurface> &surface,
+            size_t displayWidth, size_t displayHeight,
+            size_t decodedWidth, size_t decodedHeight,
+            int32_t rotationDegrees = 0)
+    {
+        typedef void *(*localFuncCast)(void *thiz, OMX_COLOR_FORMATTYPE colorFormat,
+            const sp<ISurface> &surface,
+            size_t displayWidth, size_t displayHeight,
+            size_t decodedWidth, size_t decodedHeight,
+            int32_t rotationDegrees);
+        localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android16SoftwareRendererC2E20OMX_COLOR_FORMATTYPERKNS_2spINS_8ISurfaceEEEjjjji");
+
+        if(!lfc)
+        {
+            LOGE("Could not resolve software renderer ctor.");
+            return NULL;
+        }
+
+        void *mem = malloc(8192); // Over allocate.
+        return (VideoRenderer*)lfc(mem, colorFormat, surface, displayWidth, displayHeight, decodedWidth, decodedHeight, rotationDegrees);
+    } */
 
     class IInterface : public virtual RefBase
     {
@@ -595,10 +985,10 @@ namespace android_video_shim
 
             for(int i=0; i<32; i++)
             {
-                LOGV2("vtable[%d] = %p", i, fakeObj[0][i]);
+                LOGV("vtable[%d] = %p", i, fakeObj[0][i]);
             }
 
-            LOGV2("expected OMX::createRenderer=%p", searchSymbol("_ZN7android3OMX14createRendererERKNS_2spINS_8ISurfaceEEEPKc20OMX_COLOR_FORMATTYPEjjjji"));
+            LOGV("expected OMX::createRenderer=%p", searchSymbol("_ZN7android3OMX14createRendererERKNS_2spINS_8ISurfaceEEEPKc20OMX_COLOR_FORMATTYPEjjjji"));
 
             LOGI("virtual IOMX::createRenderer=%p", lfc);
             sp<IOMXRenderer> r = lfc((void*)this, surface, componentName, colorFormat, encodedWidth, encodedHeight, displayWidth, displayHeight, rotationDegrees);
@@ -619,15 +1009,18 @@ namespace android_video_shim
 
             LOGV2("Resolving android.view.Surface class.");
             jclass surfaceClass = env->FindClass("android/view/Surface");
-            if (surfaceClass == NULL) {
+            if (surfaceClass == NULL) 
+            {
                 LOGE("Can't find android/view/Surface");
                 return NULL;
             }
-            LOGV2("   o Got %d", jclass);
+
+            LOGV2("   o Got %p", surfaceClass);
 
             LOGV2("Resolving android.view.Surface field ID");
             jfieldID surfaceID = env->GetFieldID(surfaceClass, ANDROID_VIEW_SURFACE_JNI_ID, "I");
-            if (surfaceID == NULL) {
+            if (surfaceID == NULL) 
+            {
                 LOGE("Can't find Surface.mSurface");
                 return NULL;
             }
@@ -831,6 +1224,20 @@ namespace android_video_shim
     {
     public:
 
+        MediaBuffer()
+        {
+            assert(0); // We don't want to make our own with this path.
+        }
+
+        MediaBuffer(size_t size)
+        {
+            typedef void (*localFuncCast)(void *thiz, unsigned int size);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android11MediaBufferC1Ej");
+            assert(lfc);
+            LOGV2("MediaBuffer::ctor with size = %p", lfc);
+            lfc(this, size);
+        }
+
         // Decrements the reference count and returns the buffer to its
         // associated MediaBufferGroup if the reference count drops to 0.
         void release()
@@ -867,9 +1274,13 @@ namespace android_video_shim
             return lfc(this);
         }
 
-        size_t range_offset() const
+        size_t range_offset()
         {
-            assert(0);
+            typedef size_t (*localFuncCast)(void *thiz);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZNK7android11MediaBuffer12range_offsetEv");
+            assert(lfc);
+            LOGV2("MediaBuffer::range_offset = %p this=%p", lfc, this);
+            return lfc(this);
         }
 
         size_t range_length()
@@ -920,6 +1331,9 @@ namespace android_video_shim
         {
             assert(0);
         }
+
+        // Dummy memory to make sure we can hold everything.
+        char dummy[256];
 
     };
 
@@ -1029,12 +1443,15 @@ namespace android_video_shim
 
             void setSeekTo(int64_t time_us, SeekMode mode = SEEK_CLOSEST_SYNC);
             void clearSeekTo();
-            bool getSeekTo(int64_t *time_us, SeekMode *mode) const;
+            bool getSeekTo(int64_t *time_us, SeekMode *mode) const
+            {
+                return false;
+            }
 
             void setLateBy(int64_t lateness_us);
             int64_t getLateBy() const;
 
-        private:
+        public:
             enum Options {
                 kSeekTo_Option      = 1,
             };
@@ -1062,8 +1479,10 @@ namespace android_video_shim
         }*/
 
     protected:
-        virtual ~MediaSource();
+        virtual ~MediaSource()
+        {
 
+        }
 
     };
 
@@ -1160,7 +1579,7 @@ namespace android_video_shim
             typedef status_t (*localFuncCast)(void *thiz, MediaBuffer **buffer, const ReadOptions *options);
             localFuncCast **fakeObj = (localFuncCast **)this;
             localFuncCast lfc = fakeObj[0][vtableOffset];
-            //LOGV("virtual read=%p", lfc);
+            LOGV2("virtual read=%p this=%p", lfc, this);
             return lfc(this, buffer, options);
         }
 
@@ -1190,7 +1609,7 @@ namespace android_video_shim
             void setLateBy(int64_t lateness_us);
             int64_t getLateBy() const;
 
-        private:
+        public:
             enum Options {
                 kSeekTo_Option      = 1,
             };
@@ -1223,9 +1642,9 @@ namespace android_video_shim
         }*/
 
     protected:
-        virtual ~MediaSource23();
-
-
+        virtual ~MediaSource23()
+        {
+        }
     };
 
     // Do nothing stub for OMXClient.
@@ -1384,6 +1803,7 @@ namespace android_video_shim
         kKeyBitRate           = 'brte',  // int32_t (bps)
         kKeyESDS              = 'esds',  // raw data
         kKeyAVCC              = 'avcc',  // raw data
+        kTypeAVCC             = 'avcc',
         kKeyD263              = 'd263',  // raw data
         kKeyVorbisInfo        = 'vinf',  // raw data
         kKeyVorbisBooks       = 'vboo',  // raw data
@@ -1447,6 +1867,11 @@ namespace android_video_shim
         // To store the timed text format data
         kKeyTextFormatData    = 'text',  // raw data
         kKeyRequiresSecureBuffers = 'secu',  // bool (int32_t)
+        kKeySARWidth = 'sarW',
+        kKeySARHeight = 'sarH',
+        kKeyIsADTS            = 'adts',  // bool (int32_t)
+        kTypeESDS        = 'esds',
+        kTypeD263        = 'd263',
     };
 
 
@@ -1498,14 +1923,16 @@ namespace android_video_shim
     class MetaData : public RefBase
     {
     public:
-        char data[8192];
+        char data[1024]; // Padding to make sure we have enough RAM.
 
         MetaData()
         {
             typedef void (*localFuncCast)(void *thiz);
-            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaDataC2Ev");
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaDataC1Ev");
             assert(lfc);
             lfc(this);
+
+            LOGV2("ctor=%p", this);
         }
 
         ~MetaData()
@@ -1514,6 +1941,14 @@ namespace android_video_shim
             localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaDataD1Ev");
             assert(lfc);
             lfc(this);
+        }
+
+        bool findData(uint32_t key, uint32_t *type, const void **data, size_t *size)
+        {
+            typedef bool (*localFuncCast)(void *thiz, uint32_t key, uint32_t *type, const void **data, size_t *size);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZNK7android8MetaData8findDataEjPjPPKvS1_");
+            assert(lfc);
+            return lfc(this, key, type, data, size);
         }
 
         bool findPointer(uint32_t key, void **value)
@@ -1558,13 +1993,61 @@ namespace android_video_shim
             return lfc(this, key, left, top, right, bottom);
         }
 
+        bool setCString(uint32_t key, const char *value)
+        {
+            typedef bool (*localFuncCast)(void *thiz, uint32_t key, const char *value);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaData10setCStringEjPKc");
+            assert(lfc);
+            return lfc(this, key, value);
+        }
+
+        bool setInt32(uint32_t key, int32_t value)
+        {
+            typedef bool (*localFuncCast)(void *thiz, uint32_t key, int32_t value);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaData8setInt32Eji");
+            assert(lfc);
+            return lfc(this, key, value);
+        }
+
+        bool setInt64(uint32_t key, int64_t value)
+        {
+            typedef bool (*localFuncCast)(void *thiz, uint32_t key, int64_t value);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaData8setInt64Ejx");
+            assert(lfc);
+            return lfc(this, key, value);
+        }
+
+        bool setFloat(uint32_t key, float value)
+        {
+            typedef bool (*localFuncCast)(void *thiz, uint32_t key, float value);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaData8setFloatEjf");
+            assert(lfc);
+            return lfc(this, key, value);
+        }
+
+        bool setPointer(uint32_t key, void *value)
+        {
+            typedef bool (*localFuncCast)(void *thiz, uint32_t key, void *value);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaData10setPointerEjPv");
+            assert(lfc);
+            return lfc(this, key, value);
+        }
+
+        bool setData(uint32_t key, uint32_t type, const void *data, size_t size)
+        {
+            typedef bool (*localFuncCast)(void *thiz, uint32_t key, uint32_t type, const void *data, size_t size);
+            localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android8MetaData7setDataEjjPKvj");
+            assert(lfc);
+            return lfc(this, key, type, data, size);
+        }
+
         void dumpToLog()
         {
             typedef void (*localFuncCast)(void *thiz);
             localFuncCast lfc = (localFuncCast)searchSymbol("_ZNK7android8MetaData9dumpToLogEv");
             if(!lfc)
             {
-                LOGI("Failing to dumpToLog, symbol not found.");
+                LOGV("Failing to dumpToLog, symbol not found.");
                 return;
             }
             assert(lfc);
@@ -1670,15 +2153,21 @@ namespace android_video_shim
         }
     };
 
-    // How do we override a DataSource?
+    // Provide our own data source with cross-device compatibility.
     class HLSDataSource : public DataSource
     {
     public:
-        HLSDataSource(): mSourceIdx(0), mSegmentStartOffset(0), mOffsetAdjustment(0)
+        HLSDataSource(): mSourceIdx(0), mSegmentStartOffset(0), mOffsetAdjustment(0),
+        				 mContinuityEra(0), mQuality(0), mStartTime(0)
         {
             // Initialize our mutex.
-            int err = pthread_mutex_init(&mutex, NULL);
+            int err = initRecursivePthreadMutex(&lock);
             LOGI(" HLSDataSource mutex err = %d", err);
+        }
+
+        void dummyDtor()
+        {
+
         }
 
         void patchTable()
@@ -1687,11 +2176,15 @@ namespace android_video_shim
 
             // First look up and make a copy of the official vtable.
             // This leaks a bit of RAM per source but we can deal with that later.
-            void *officialVtable = searchSymbol("_ZTVN7android10DataSourceE");
-            assert(officialVtable); // Gotta have a vtable!
+            // Update - we can't resolve this symbol on some x86 devices, and it turns
+            // out we don't need it - we can just set stuff to 0s and it works OK.
+            // This is obviously a bit finicky but adequate for now.
+            //void *officialVtable = searchSymbol("_ZTVN7android10DataSourceE");
+            //assert(officialVtable); // Gotta have a vtable!
             void *newVtable = malloc(1024); // Arbitrary size... As base class we
                                             // we always get ptr to start of vtable.
-            memcpy(newVtable, officialVtable, 1024);
+            //memcpy(newVtable, officialVtable, 1024);
+            memset(newVtable, 0, 1024);
 
             // Now we can patch the vtable...
             void ***fakeObj = (void***)this;
@@ -1700,7 +2193,7 @@ namespace android_video_shim
             fakeObj[0] = (void**)(((int*)newVtable) + 2);
 
             // Dump some useful known symbols.
-            #if 1
+            #if 0
             #define DLSYM_MACRO(s) LOGI("   o %s=%p", #s, searchSymbol(#s));
 
             DLSYM_MACRO(_ZN7android10DataSource7getSizeEPx); // Only on higher
@@ -1721,16 +2214,21 @@ namespace android_video_shim
             // actually treating them as such here because there's no instance.
             // So we should be OK! But if the values here report as not code
             // segment values then you might need to revisit.
-            LOGI(" _initCheck=%p", (void*)&HLSDataSource::_initCheck);
-            LOGI(" _readAt=%p", (void*)&HLSDataSource::_readAt);
-            LOGI(" _getSize=%p", (void*)&HLSDataSource::_getSize);
+            LOGSYMBOLERROR(" _initCheck=%p", (void*)&HLSDataSource::_initCheck);
+            LOGSYMBOLERROR(" _readAt=%p", (void*)&HLSDataSource::_readAt);
+            LOGSYMBOLERROR(" _getSize=%p", (void*)&HLSDataSource::_getSize);
 
-            LOGI(" _readAt_23=%p", (void*)&HLSDataSource::_readAt_23);
-            LOGI(" _getSize_23=%p", (void*)&HLSDataSource::_getSize_23);
+            LOGSYMBOLERROR(" _readAt_23=%p", (void*)&HLSDataSource::_readAt_23);
+            LOGSYMBOLERROR(" _getSize_23=%p", (void*)&HLSDataSource::_getSize_23);
 
             // And override the pointers as appropriate.
             if(AVSHIM_USE_NEWDATASOURCEVTABLE)
             {
+                // Stub in a dummy function for the other entries so that if
+                // e.g. someone tries to call a destructor it won't segfault.
+                for(int i=0; i<18; i++)
+                    fakeObj[0][i] = (void*)&HLSDataSource::dummyDtor;
+
                 // 4.x entry points
                 fakeObj[0][6] = (void*)&HLSDataSource::_initCheck;
                 fakeObj[0][7] = (void*)&HLSDataSource::_readAt;
@@ -1742,6 +2240,11 @@ namespace android_video_shim
                 void *oldGetSize = searchSymbol("_ZN7android10DataSource7getSizeEPl");
                 void *oldGetSize2 = searchSymbol("_ZN7android10DataSource7getSizeEPx");
                 LOGI("  oldGetSize_l=%p oldGetSize_x=%p fakeObj[0][8]=%p", oldGetSize, oldGetSize2, fakeObj[0][8]);
+
+                // Stub in a dummy function for the other entries so that if
+                // e.g. someone tries to call a destructor it won't segfault.
+                for(int i=0; i<18; i++)
+                    fakeObj[0][i] = (void*)&HLSDataSource::dummyDtor;
 
                 // 2.3 entry points
                 fakeObj[0][6] = (void*)&HLSDataSource::_initCheck;
@@ -1755,197 +2258,186 @@ namespace android_video_shim
 
         }
 
-        virtual void foo() { assert(0); }
-
-        void clear()
+        void clearSources()
         {
-        	pthread_mutex_lock(&mutex);
+            AutoLock locker(&lock, __func__);
         	mSources.clear();
         	mSourceIdx = 0;
         	mOffsetAdjustment = 0;
-        	pthread_mutex_unlock(&mutex);
         }
 
-        status_t append(const char* uri)
+        bool isSameEra(int quality, int continuityEra)
         {
-            sp<DataSource> dataSource = DataSource::CreateFromURI(uri);
-            if(!dataSource.get())
-            {
-                LOGI("Failed to create DataSource for %s", uri);
-                return -1;
-            }
+        	return mSources.size() == 0 || (mSources.size() > 0 && quality == mQuality && continuityEra == mContinuityEra);
+        }
 
-            status_t rval = dataSource->initCheck();
-            LOGE("DataSource initCheck() result: %s", strerror(-rval));
+        status_t append(const char* uri, int quality, int continuityEra, double startTime, int cryptoId)
+        {
+            AutoLock locker(&lock, __func__);
 
-            // If it's not OK, then what?!
+            if (mSources.size() > 0 && (quality != mQuality || continuityEra != mContinuityEra))
+            	return INFO_DISCONTINUITY;
+
+            if (mSources.size() == 0) // storing the start time of the first segment in the source list
+            	mStartTime = startTime;
+
+            mQuality = quality;
+            mContinuityEra = continuityEra;
+
+            // Small memory leak, look out.
+            uri = strdup(uri);
 
             // Stick it in our sources.
-            pthread_mutex_lock(&mutex);
-            mSources.push_back(dataSource);
-            pthread_mutex_unlock(&mutex);
-            return rval;
+            mSources.push_back(uri);
+
+            return OK;
+        }
+
+        void logContinuityInfo()
+        {
+        	LOGI("Quality = %d | Continuity Era = %d | Time = %f | First URI = %s ", mQuality, mContinuityEra, mStartTime, *mSources.begin()  );
+        }
+
+        int getQualityLevel()
+        {
+        	return mQuality;
+        }
+
+        int getContinuityEra()
+        {
+        	return mContinuityEra;
+        }
+
+        double getStartTime()
+        {
+        	return mStartTime;
         }
 
         int getPreloadedSegmentCount()
         {
-            pthread_mutex_lock(&mutex);
-            int res = mSources.size() - mSourceIdx;
-            pthread_mutex_unlock(&mutex);
+            AutoLock locker(&lock, __func__);
+            int res = (mSources.size() - mSourceIdx) - 1;
             return res;
         }
 
-        status_t _initCheck() const
+        void touch()
         {
-            LOGI("_initCheck - Source Count = %d", mSources.size());
-            if (mSources.size() > 0)
-                return mSources[mSourceIdx]->initCheck();
+            AutoLock locker(&lock, __func__);
+            for (int i = mSourceIdx; i < mSources.size(); ++i)
+            {
+            	HLSSegmentCache::touch(mSources[i]);
+            }
+        }
 
-            LOGI("   o Returning NO_INIT");
-            return NO_INIT;
+        status_t _initCheck()
+        {
+            AutoLock locker(&lock, __func__);
+            LOGI("_initCheck!");
+
+            // With the new segment cache, we cannot fail!
+
+            return OK;
         }
 
         ssize_t _readAt(off64_t offset, void* data, size_t size)
         {
-            LOGV("Attempting _readAt");
-            pthread_mutex_lock(&mutex);
+            AutoLock locker(&lock, __func__);
 
+            // Sanity check.
             if(mSources.size() == 0)
             {
-                LOGE("No sources in HLSDataSource! Aborting...");
+                LOGE("No sources in HLSDataSource! Aborting read...");
                 return 0;
             }
 
-            off64_t sourceSize = 0;
-            mSources[mSourceIdx]->getSize(&sourceSize);
+            LOGDATAMINING("Attempting _readAt mSources[mSourceIdx]=%s %lld %p %d mOffsetAdjustment=%lld", mSources[mSourceIdx], offset, data, size, mOffsetAdjustment);
 
-            off64_t adjoffset = offset - mOffsetAdjustment;  // get our adjusted offset. It should always be >= 0
+            // Calculate adjusted offset based on reads so far. The TSExtractor
+            // always reads in order.
+            ssize_t adjOffset = offset - mOffsetAdjustment;
 
-            if (adjoffset >= sourceSize) // The thinking here is that if we run out of sources, we should just let it pass through to read the last source at the invalid buffer, generating the proper return code
-                                         // However, this doesn't solve the problem of delayed fragment downloads... not sure what to do about that, yet
-                                         // This should at least prevent us from crashing
+            // Read chunks from the segment cache until we've fulfilled the request.
+            ssize_t sizeLeft = size;
+            ssize_t readSize = 0;
+            int safety = 10;
+            while(sizeLeft > 0 && safety--)
             {
+                // If we have a negative adjOffset it means we moved into a new segment - but readSize should compensate.
+                while(adjOffset + readSize < 0)
+                {
+                	LOGDATAMINING("Got negative offset, adjOffset=%ld readSize=%ld", adjOffset, readSize);
+
+                    assert(mSourceIdx > 0);
+
+                    // Walk back to preceding source!
+                    int64_t sourceSize = HLSSegmentCache::getSize(mSources[mSourceIdx-1]);
+                    LOGDATAMINING("Retreating by %lld bytes!", sourceSize);
+
+                    mOffsetAdjustment -= sourceSize;
+                    adjOffset += sourceSize;
+
+                    mSourceIdx--;
+                }
+
+                // Attempt a read. Blocking and tries VERY hard not to fail.
+                ssize_t lastReadSize = HLSSegmentCache::read(mSources[mSourceIdx], adjOffset + readSize, sizeLeft, ((unsigned char*)data) + readSize);
+
+                if (sizeLeft - lastReadSize < 0)
+                {
+                	LOGW("NEGATIVE SIZE LEFT: sizeLeft=%d lastReadSize=%d source=%s", sizeLeft, lastReadSize, mSources[mSourceIdx]); // Something happened to the segment - maybe it's 404
+                	assert (sizeLeft - lastReadSize >= 0);
+                }
+
+
+                // Account for read.
+                sizeLeft -= lastReadSize;
+                readSize += lastReadSize;
+
+                // If done reading, then we can break out.
+                if(sizeLeft == 0)
+                    break;
+
+                // Otherwise, we need to move to the next source if we have one.
                 if(mSourceIdx + 1 < mSources.size())
                 {
-                    LOGI("Changing Segments: curIdx=%d, nextIdx=%d", mSourceIdx, mSourceIdx + 1);
-                    adjoffset -= sourceSize; // subtract the size of the current source from the offset
-                    mOffsetAdjustment += sourceSize; // Add the size of the current source to our offset adjustment for the future
-                    ++mSourceIdx;
+                    // Advance by the current source size.
+                    int64_t sourceSize = HLSSegmentCache::getSize(mSources[mSourceIdx]);
+                    LOGDATAMINING("Advancing by %lld bytes, size of current source", sourceSize);
+
+                    mOffsetAdjustment += sourceSize;
+                    adjOffset -= sourceSize;
+
+                    mSourceIdx++;
                 }
                 else
                 {
+                    // No more sources?
                     LOGI("Reached end of segment list.");
+                    break;
                 }
             }
 
-            ssize_t rsize = mSources[mSourceIdx]->readAt(adjoffset, data, size);
-
-            if (rsize < size)
+            // Make sure we didn't do anything weird.
+            if(safety == 0)
             {
-                if(rsize < 0)
-                {
-                    LOGI("Saw error %ld from datasource; advancing!", rsize);
-                    rsize = 0;
-                }
-
-                if(mSourceIdx + 1 < mSources.size())
-                {
-                    LOGI("Incomplete Read - Changing Segments : curIdx=%d, nextIdx=%d", mSourceIdx, mSourceIdx + 1);
-                    adjoffset -= sourceSize; // subtract the size of the current source from the offset
-                    mOffsetAdjustment += sourceSize; // Add the size of the current source to our offset adjustment for the future
-                    ++mSourceIdx;
-
-                    LOGI("Reading At %lld | New ", adjoffset + rsize);
-                    rsize += mSources[mSourceIdx]->readAt(adjoffset + rsize, (unsigned char*)data + rsize, size - rsize);                    
-                }
-                else
-                {
-                    LOGI("Wanted to read %ld more bytes, but no more sources.", (size - rsize));
-                }
+                LOGE("****** HIT SAFETY ON READ LOOP");
+                LOGE("****** HIT SAFETY ON READ LOOP");
+                LOGE("****** HIT SAFETY ON READ LOOP");
             }
 
-
-            LOGV2("%p | getSize = %lld | offset=%lld | offsetAdjustment = %lld | adjustedOffset = %lld | requested size = %d | rsize = %ld",
-                            this, sourceSize, offset, mOffsetAdjustment, adjoffset, size, rsize);
-
-            pthread_mutex_unlock(&mutex);
-            return rsize;
+            // Return what we read.
+            return readSize;
         }
 
         ssize_t _readAt_23(int64_t offset, void* data, unsigned int size)
         {
-            //LOGV("Attempting _readAt_23 this=%x offset=%x data=%x size=%x", this, offset, data, size);
-            pthread_mutex_lock(&mutex);
-
-            if(mSources.size() == 0)
-            {
-                LOGE("No sources in HLSDataSource! Aborting...");
-                return 0;
-            }
-
-            off64_t sourceSize = 0;
-            //LOGV("Get source %d size", mSourceIdx);
-            mSources[mSourceIdx]->getSize_23(&sourceSize);
-            //LOGV("OK sourceSize=%d offset=%x mOffsetAdjustment=%ld", sourceSize, offset, mOffsetAdjustment);
-
-            off64_t adjoffset = offset - mOffsetAdjustment;  // get our adjusted offset. It should always be >= 0
-
-            if (adjoffset >= sourceSize) // The thinking here is that if we run out of sources, we should just let it pass through to read the last source at the invalid buffer, generating the proper return code
-                                         // However, this doesn't solve the problem of delayed fragment downloads... not sure what to do about that, yet
-                                         // This should at least prevent us from crashing
-            {
-                if(mSourceIdx + 1 < mSources.size())
-                {
-                    LOGI("Changing Segments: curIdx=%d, nextIdx=%d", mSourceIdx, mSourceIdx + 1);
-                    adjoffset -= sourceSize; // subtract the size of the current source from the offset
-                    mOffsetAdjustment += sourceSize; // Add the size of the current source to our offset adjustment for the future
-                    ++mSourceIdx;
-                }
-                else
-                {
-                    LOGI("Reached end of segment list.");
-                }
-            }
-
-            //LOGV("Reading from source %d - adjoffset=%ld data=%ld size=%ld", mSourceIdx, adjoffset, data, size);
-            ssize_t rsize = mSources[mSourceIdx]->readAt_23(adjoffset, data, size);
-            //LOGV("OK %ld", rsize);
-
-            if (rsize < size)
-            {
-                if(rsize < 0)
-                {
-                    LOGI("Saw error %ld from datasource; advancing!", rsize);
-                    rsize = 0;
-                }
-
-                if(mSourceIdx + 1 < mSources.size())
-                {
-                    LOGI("Incomplete Read - Changing Segments : curIdx=%d, nextIdx=%d", mSourceIdx, mSourceIdx + 1);
-                    adjoffset -= sourceSize; // subtract the size of the current source from the offset
-                    mOffsetAdjustment += sourceSize; // Add the size of the current source to our offset adjustment for the future
-                    ++mSourceIdx;
-
-                    LOGI("Reading At %lld | New ", adjoffset + rsize);
-                    rsize += mSources[mSourceIdx]->readAt_23(adjoffset + rsize, (unsigned char*)data + rsize, size - rsize);                    
-                }
-                else
-                {
-                    LOGI("Wanted to read %ld more bytes, but no more sources.", (size - rsize));
-                }
-            }
-
-
-            LOGV2("%p | getSize = %lld | offset=%lld | offsetAdjustment = %lld | adjustedOffset = %lld | requested size = %d | rsize = %ld",
-                            this, sourceSize, offset, mOffsetAdjustment, adjoffset, size, rsize);
-
-            pthread_mutex_unlock(&mutex);
-
-            return rsize;
+            // Bump control to the main path.
+            return _readAt(offset, data, size);
         }
 
         status_t _getSize(off64_t* size)
         {
+            AutoLock locker(&lock, __func__);
             LOGV("Attempting _getSize");
             //status_t rval = mSources[mSourceIdx]->getSize(size);
             *size = 0;
@@ -1955,19 +2447,19 @@ namespace android_video_shim
 
         status_t _getSize_23(off64_t* size)
         {
-            LOGV("Attempting _getSize_23 size=%p", size);
-            status_t rval = mSources[mSourceIdx]->getSize_23(size);
-            LOGV("getSize - %p | size = %lld", this, *size);
-            return rval;
+            return _getSize(size);
         }
 
     private:
 
-        pthread_mutex_t mutex;
-        std::vector< sp<DataSource> > mSources;
+        pthread_mutex_t lock;
+        std::vector< const char * > mSources;
         uint32_t mSourceIdx;
         off64_t mSegmentStartOffset;
         off64_t mOffsetAdjustment;
+        int mQuality;
+        int mContinuityEra;
+        double mStartTime;
 
     };
 
@@ -2000,7 +2492,7 @@ namespace android_video_shim
             return lfc(this);
         }
 
-        status_t convert(
+        void convert(
                 const void *srcBits,
                 size_t srcWidth, size_t srcHeight,
                 size_t srcCropLeft, size_t srcCropTop,
@@ -2010,7 +2502,7 @@ namespace android_video_shim
                 size_t dstCropLeft, size_t dstCropTop,
                 size_t dstCropRight, size_t dstCropBottom)
         {
-            typedef status_t (*localFuncCast)(void *thiz, const void *srcBits,
+            typedef void (*localFuncCast)(void *thiz, const void *srcBits,
                 size_t srcWidth, size_t srcHeight,
                 size_t srcCropLeft, size_t srcCropTop,
                 size_t srcCropRight, size_t srcCropBottom,
@@ -2018,21 +2510,36 @@ namespace android_video_shim
                 size_t dstWidth, size_t dstHeight,
                 size_t dstCropLeft, size_t dstCropTop,
                 size_t dstCropRight, size_t dstCropBottom);
+
+            typedef void (*localFuncCast2)(void *thiz, size_t width, size_t height, const void *srcBits, size_t srcSkip, void *dstBits, size_t dstSkip);
+
             localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android14ColorConverter7convertEPKvjjjjjjPvjjjjjj");
-            //localFuncCast lfc = (localFuncCast)searchSymbol("_ZN7android14ColorConverter7convertEPKvjjjjjjPvjjjjjj");
+            localFuncCast2 lfc2 = (localFuncCast2)searchSymbol("_ZN7android14ColorConverter7convertEjjPKvjPvj");
 
-            LOGI("color convert = %p", lfc);
+            LOGV("color convert = %p or %p srcBits=%p dstBits=%p", lfc, lfc2, srcBits, dstBits);
 
-            assert(lfc);
-            return lfc(this, srcBits,
-                 srcWidth,  srcHeight,
-                 srcCropLeft,  srcCropTop,
-                 srcCropRight,  srcCropBottom,
-                dstBits,
-                 dstWidth,  dstHeight,
-                 dstCropLeft,  dstCropTop,
-                 dstCropRight,  dstCropBottom);
+            if(lfc)
+                lfc(this, srcBits,
+                     srcWidth,  srcHeight,
+                     srcCropLeft,  srcCropTop,
+                     srcCropRight,  srcCropBottom,
+                    dstBits,
+                     dstWidth,  dstHeight,
+                     dstCropLeft,  dstCropTop,
+                     dstCropRight,  dstCropBottom);
+            else if(lfc2)
+            {
+                lfc2(this, srcWidth, srcHeight, srcBits, 0, dstBits, dstWidth * 2);
+            }
+            else
+            {
+                LOGE("Failed to find conversion function.");
+            }
+
+            // Debug line.
+            //for(int i=0; i<dstWidth*dstHeight; i++) ((unsigned short*)dstBits)[i] = rand();            
         }
+
     };
 
 

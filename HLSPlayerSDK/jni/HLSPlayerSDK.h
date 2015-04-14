@@ -16,20 +16,26 @@ class HLSPlayer;
 class HLSPlayerSDK
 {
 public:
-	HLSPlayerSDK(JavaVM* jvm);
+	HLSPlayerSDK(JavaVM* jvm, int jniVersion);
 	~HLSPlayerSDK();
 
 	void Close(JNIEnv* env);
 
 	bool CreateDecoder();
-	void PlayFile();
+	void PlayFile(double time);
 
 	//HLSDecoder* GetDecoder();
 	HLSPlayer* GetPlayer();
 
+	JavaVM* getJVM();
+	int getJVMVersion();
+
+	bool GetEnv(JNIEnv** env);
+
 private:
 
 	JavaVM* mJvm;
+	int mJniVersion;
 
 	HLSPlayer* mPlayer;
 

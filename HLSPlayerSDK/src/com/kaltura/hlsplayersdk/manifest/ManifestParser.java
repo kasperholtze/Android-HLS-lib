@@ -1,21 +1,44 @@
 package com.kaltura.hlsplayersdk.manifest;
 
 
-import java.net.MalformedURLException;
-import com.loopj.android.http.*;
-import java.net.URL;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Vector;
 
 import android.util.Log;
 import android.util.EventLog.Event;
-import android.view.View.OnClickListener;
 
+import com.kaltura.hlsplayersdk.HLSPlayerViewController;
 import com.kaltura.hlsplayersdk.URLLoader;
-import com.kaltura.hlsplayersdk.URLLoader.DownloadEventListener;
 import com.kaltura.hlsplayersdk.subtitles.*;
+import com.kaltura.hlsplayersdk.events.OnErrorListener;
 import com.kaltura.hlsplayersdk.manifest.events.*;
 
 public class ManifestParser implements OnParseCompleteListener, URLLoader.DownloadEventListener {
+	
+	private static int instanceCounter = 0;
+	private int instanceCount = 0;
+	public int instance() { return instanceCount; }
+	
+	class BandwidthComparator implements Comparator<ManifestStream>
+	{
+
+		@Override
+		public int compare(ManifestStream arg0, ManifestStream arg1)
+		{
+			if (arg0.bandwidth == arg1.bandwidth) return 0;
+			if (arg0.bandwidth < arg1.bandwidth) return -1;
+			return 1;
+		}
+		
+	}
+	
+	public ManifestParser()
+	{
+		++instanceCounter;
+		instanceCount = instanceCounter;
+	}
+	
 	public static final String DEFAULT = "DEFAULT";
 	public static final String AUDIO = "AUDIO";
 	public static final String VIDEO = "VIDEO";
@@ -31,24 +54,46 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 	public boolean allowCache;
 	public double targetDuration;
 	public boolean streamEnds = false;
+	public int quality = -1;
 	public Vector<ManifestPlaylist> playLists = new Vector<ManifestPlaylist>();
 	public Vector<ManifestStream> streams = new Vector<ManifestStream>();
 	public Vector<ManifestSegment> segments = new Vector<ManifestSegment>();
 	public Vector<ManifestPlaylist> subtitlePlayLists = new Vector<ManifestPlaylist>();
-	public Vector<SubTitleParser> subtitles = new Vector<SubTitleParser>();
+	public Vector<SubTitleSegment> subtitles = new Vector<SubTitleSegment>();
 	public Vector<ManifestEncryptionKey> keys = new Vector<ManifestEncryptionKey>();
 	
 	public Vector<URLLoader> manifestLoaders = new Vector<URLLoader>();
 	public Vector<ManifestParser> manifestParsers = new Vector<ManifestParser>();
-	//private URLLoader manifestReloader = null;
+	public boolean goodManifest = true;
+	private int mReloadFailureCount = 0;
+	
+	public int videoPlayId = 0; // Used for tracking which video play we're on. Only the base manifest parser will have this set to anything other than 0.
 	
 	public int continuityEra = 0;
 	private int _subtitlesLoading = 0;
+	
+	private ManifestParser mReloadingManifest = null; 	// If this is the parent, mReloadingManifest is the child. If this is the child, mReloadingManifest is the parent
+	
+	private boolean mReloadParent = true;
+	
+	
+	public ManifestParser getReloadParent()
+	{
+		if (mReloadParent) return this;
+		return mReloadingManifest;
+	}
+	
+	public ManifestParser getReloadChild()
+	{
+		if (mReloadParent) return mReloadingManifest;
+		return this;		
+	}
 	
 	@Override
 	public String toString()
 	{
 		StringBuilder sb = new StringBuilder();
+		sb.append("\nManifest instance : " + instanceCount + "\n-----------------------------\n");
 		sb.append("type : " + type + "\n");
 		sb.append("version : " + version + "\n");
 		sb.append("baseUrl : " + baseUrl + "\n");
@@ -74,6 +119,21 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 		return sb.toString();
 	}
 	
+	public double estimatedWindowDuration()
+	{
+		return segments.size() * targetDuration;
+	}
+	
+	public boolean isDVR()
+	{
+		return allowCache && !streamEnds;
+	}
+	
+	public boolean needsReloading()
+	{
+		return !streamEnds && (segments.size()  > 0 || subtitles.size() > 0);
+	}
+	
 	public void dumpToLog()
 	{
 		Log.i("ManifestParser.dumpToLog", this.toString());
@@ -81,7 +141,7 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 	
 	public static String getNormalizedUrl( String baseUrl, String uri)
 	{
-		return ( uri.substring(0, 5).equals("http:") || uri.substring(0, 6).equals("https:") || uri.substring(0, 5).equals("file:")) ? uri : baseUrl + uri;
+		return ( uri.startsWith("http:") || uri.startsWith("https:") || uri.startsWith("file:")) ? uri : baseUrl + uri;
 	}
 	
 	public static <T> T as(Class<T> t, Object o) {
@@ -89,6 +149,16 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 		}
 
 	private Object lastHint = null;
+	
+	public boolean hasSegments()
+	{
+		if (segments.size() > 0) return true;
+		for (int i = 0; i < streams.size(); ++i)
+		{
+			if (streams.get(i).manifest != null && streams.get(i).manifest.hasSegments()) return true;
+		}
+		return false;
+	}
 
 	public void parse(String input, String _fullUrl)
 	{
@@ -106,16 +176,28 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 		
 		int nextByteRangeStart = 0;
 		
+		if (lines.length == 0)
+		{
+			goodManifest = false;
+		}
+		
 		int i = 0;
 		for ( i = 0; i < lines.length; ++i)
 		{
 			String curLine = lines[i];
+
 			// Ignore empty lines;
 			if (curLine.length() == 0) continue;
-
 			
 			String curPrefix = curLine.substring(0, 1);
 			
+			if (i == 0 && !curLine.contains("#EXTM3U"))
+			{
+				Log.i("ManifestParser.parse()", "Bad Stream! #EXTM3U is missing from the first line");
+				goodManifest = false;
+				HLSPlayerViewController.currentController.postError(OnErrorListener.MEDIA_ERROR_MALFORMED, "#EXTM3U is missing from the first line. " + this.fullUrl);
+				break;
+			}
 			
 			if (!curPrefix.endsWith("#") && curLine.length() > 0)
 			{
@@ -123,7 +205,6 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 				if ( !type.equals(SUBTITLES ))
 				{
 					String targetUrl = getNormalizedUrl(baseUrl, curLine);
-// TODO - lastHint!!!
 					ManifestSegment segment = as(ManifestSegment.class, lastHint);
 					if (segment != null && segment.byteRangeStart != -1)
 					{
@@ -131,9 +212,6 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 						String urlPostFix = targetUrl.indexOf( "?" ) == -1 ? "?" : "&";
 						targetUrl += urlPostFix + "range=" + segment.byteRangeStart + "-" + segment.byteRangeEnd;
 					}
-//TODO - figure out what to do about lastHint, because it isn't going to work the way it's being used
-					//lastHint.getClass().getField("uri").set(lastHint, targetUrl);
-					
 					
 					BaseManifestItem mi = as(BaseManifestItem.class, lastHint);
 					if (mi != null)
@@ -146,8 +224,15 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 				}
 				else
 				{
-// TODO - SubTitleParser!!!
-					//((SubTitleParser)lastHint).load( getNormalizedUrl ( baseUrl, curLine) );
+					// SUBTITLES
+					String targetUrl = getNormalizedUrl(baseUrl, curLine); 
+					SubTitleSegment sp = as(SubTitleSegment.class, lastHint);
+					if (sp != null)
+						sp.setUrl(targetUrl);
+					else
+					{
+						Log.e("ManifestParser.parse", "UnknownType. Can't call SubTitleSegment.setUrl(): " + lastHint.toString());
+					}
 				}
 				continue;
 			}
@@ -175,10 +260,14 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 			}
 			else if (tagType.equals("EXT-X-KEY"))
 			{
-//				if (keys.size() > 0) keys.get(keys.size() - 1).endSegmentId = segments.size() - 1;
-//				ManifestEncryptionKey key = ManifestEncryptionKey.fromParams(tagParams);
-//				key.startSegmentId = segments.size();
-//				keys.add(key);
+				if (keys.size() > 0) keys.get(keys.size() - 1).endSegmentId = segments.size() - 1;
+				ManifestEncryptionKey key = ManifestEncryptionKey.fromParams(tagParams);
+				key.startSegmentId = segments.size();
+				if (!key.url.contains("://"))
+				{
+					key.url = getNormalizedUrl(baseUrl, key.url);
+				}
+				keys.add(key);
 			}
 			else if (tagType.equals("EXT-X-VERSION"))
 			{
@@ -187,6 +276,7 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 			else if (tagType.equals("EXT-X-MEDIA-SEQUENCE"))
 			{
 				mediaSequence = Integer.parseInt(tagParams);
+				Log.i("ManifestParser(" + instanceCount + ")", "Type=" + type + " MediaSequence=" + mediaSequence);
 			}
 			else if (tagType.equals("EXT-X-ALLOW-CACHE"))
 			{
@@ -211,19 +301,18 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 			else if (tagType.equals("EXT-X-STREAM-INF"))
 			{
 				streams.add(ManifestStream.fromString(tagParams));
-// TODO: Last Hint
 				lastHint = streams.get(streams.size() - 1);
 			}
 			else if (tagType.equals("EXTINF"))
 			{
 				if ( type.equals(SUBTITLES ))
 				{
-					//TODO: SUBTITLES!!!
-//					SubTitleParser subTitle = new SubTitleParser();
-//					subTitle.addEventListener( Event.COMPLETE, onSubtitleLoaded );
-//					subtitles.add( subTitle );
-//					lastHint = subTitle;
-//					_subtitlesLoading++;
+					SubTitleSegment subTitle = new SubTitleSegment();
+					String[] valueSplit = tagParams.split(",");
+					subTitle.segmentTimeWindowDuration = Double.parseDouble(valueSplit[0]);
+					subtitles.add( subTitle );
+					lastHint = subTitle;
+					
 				}
 				else
 				{
@@ -231,8 +320,14 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 					segments.add((ManifestSegment)lastHint);
 					lastHint = segments.get(segments.size()-1);
 					String [] valueSplit = tagParams.split(",");
-					((ManifestSegment)lastHint).duration =  Double.parseDouble(valueSplit[0]);
+					
+					if (valueSplit.length > 0) 
+						((ManifestSegment)lastHint).duration =  Double.parseDouble(valueSplit[0]);
+					else 
+						((ManifestSegment)lastHint).duration = targetDuration;
+					
 					((ManifestSegment)lastHint).continuityEra = continuityEra;
+					
 					if(valueSplit.length > 1)
 					{
 						((ManifestSegment)lastHint).title = valueSplit[1];
@@ -260,15 +355,15 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 			{
 				Log.w("ManifestParser.parse", "Unknown tag '" + tagType + "', ignoring...");
 			}
-//			if (lastHint == null)
-//				Log.i("Parse.lastHint", "null");
-//			else
-//				Log.i("Parse.lastHint", lastHint.toString());
-			
 		}
 		
+		Collections.sort(streams, new BandwidthComparator());
+		
+		for (ManifestStream stream : streams)
+			Log.i("ManifestParser.parse", "Stream Bandwidth: " + stream.bandwidth);
+		
+		
 		// Process any other manifests referenced
-		//boolean pendingManifests = false;
 		Vector<BaseManifestItem> manifestItems = new Vector<BaseManifestItem>();
 		manifestItems.addAll(streams);
 		manifestItems.addAll(playLists);
@@ -284,16 +379,26 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 			}
 		}
 		
+		// update start time for the segments we own
 		double timeAccum = 0.0;
 		for (int m = 0; m < segments.size(); ++m)
 		{
 			segments.get(m).id = mediaSequence + m; // set the id based on the media sequence
 			segments.get(m).startTime = timeAccum;
+			//Log.i("ManifestParser(" + instanceCount + ").foundSegment", "SegmentURI=" + segments.get(m).uri);
 			timeAccum += segments.get(m).duration;
 		}
 		
-		if (manifestLoaders.size() == 0 && this.mOnParseCompleteListener != null)
-			mOnParseCompleteListener.onParserComplete(this);
+		// update start time for the subtitles we own
+		timeAccum = 0.0;
+		for (int m = 0; m < subtitles.size(); ++m)
+		{
+			subtitles.get(m).id = mediaSequence + m;
+			subtitles.get(m).setTimeWindowStart(timeAccum);
+			timeAccum += subtitles.get(m).segmentTimeWindowDuration;
+		}
+		
+		if (manifestLoaders.size() == 0) postParseComplete(this);
 			
 	}
 	
@@ -302,20 +407,75 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 		// work through the streams and remove any broken ones
 		for (int i = streams.size() - 1; i >= 0; --i)
 		{
-			if (streams.get(i).manifest == null)
+			if (streams.get(i).manifest == null || streams.get(i).manifest.goodManifest == false)
 				streams.remove(i);
 		}
 		
+		// Make our streamEnds value match the value of the first stream
+		if (streams.size() > 0)
+			streamEnds = streams.get(0).manifest.streamEnds;
+		else if (subtitlePlayLists.size() > 0)
+			streamEnds = subtitlePlayLists.get(0).manifest.streamEnds;
+		
+		// Work through the streams and set up the backup streams
+		int backupCount = 0;
+		for (int i = streams.size() - 1; i >= 0; --i)
+		{
+			// skip the last item in the list because we don't know yet if it's a backup
+			if (i == streams.size() - 1)
+				continue;
+			
+			if (streams.get(i).bandwidth == streams.get(i+1).bandwidth)
+			{
+				backupCount++;
+			}
+			else if (backupCount > 0)
+			{
+				// link the main stream with its backup stream(s)
+				linkBackupStreams(i+1, backupCount);
+				backupCount = 0;
+			}
+		}
+		
+		// Check for leftovers
+		if (backupCount > 0)
+			linkBackupStreams(0, backupCount);
+		
+		// Remove any dead manifests
 		for (int i = playLists.size() - 1; i >= 0; --i)
 		{
 			if (playLists.get(i).manifest == null)
 				playLists.remove(i);
 		}
+		
+		// Set the qualities
+		for (int i = 0; i < playLists.size(); ++i)
+			playLists.get(i).manifest.quality = i;
+		
+		for (int i = 0; i < streams.size(); ++i)
+			streams.get(i).manifest.quality = i;
+	}
+	
+	private void linkBackupStreams(int startIndex, int count)
+	{
+		// store the index of the last item so we don't have to do the math more than once
+		int lastIndex = startIndex + count;
+
+		// link the last stream to the first stream
+		streams.get(lastIndex).backupStream = streams.get(startIndex);
+		streams.get(startIndex).numBackups = count;
+		
+		for (int i = lastIndex; i > startIndex; --i)
+		{
+			streams.get(i - 1).backupStream = streams.get(i);
+			streams.get(i).numBackups = count;
+			streams.remove(i);
+		}
 	}
 	
 	private void addItemToManifestLoader(BaseManifestItem item)
 	{
-		URLLoader manifestLoader = new URLLoader(this, item);
+		URLLoader manifestLoader = new URLLoader("ManifestParser.addItemToManifestLoader", this, item);
 		manifestLoaders.add(manifestLoader);
 		manifestLoader.get(item.uri);
 	}
@@ -324,7 +484,7 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 	public void onDownloadFailed(URLLoader loader, String response) {
 		if (loader.manifestItem != null)
 		{
-			Log.w("ManifestParser.onManifestError", "ERROR loading maifest " + response);
+			Log.w("ManifestParser.onManifestError", "ERROR loading manifest " + response);
 			manifestLoaders.remove(loader);
 			announceIfComplete();
 		}
@@ -332,12 +492,15 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 		{
 			
 		}
-		if (mReloadEventListener != null) mReloadEventListener.onReloadFailed(this);
+		HLSPlayerViewController.currentController.postError(OnErrorListener.MEDIA_ERROR_IO, loader.uri + "(" + response + ")");
+		postReloadFailed(this);
 	}
 
 	@Override
 	public void onDownloadComplete(URLLoader loader, String response) {
 		
+		Log.i("ManifestParser.onDownloadComplete(" + instanceCount + ")", "Reloading type=" + type + " loader.manifestItem=" + (loader.manifestItem == null ? null : loader.manifestItem.hashCode()) + " listenerHash=" + ( mReloadEventListener != null ? mReloadEventListener.hashCode() : null )+ " URI=" + fullUrl);
+
 		if (loader.manifestItem != null) // this is a load of a submanifest
 		{
 			String resourceData = response;
@@ -364,43 +527,89 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 	@Override
 	public void onParserComplete(ManifestParser parser)
 	{
+		Log.i("ManifestParser.onParserComplete(" + instanceCount + ")", "Parse Complete - parser=" + parser.instance() + " type=" + type + " reloadListenerHash=" + ( mReloadEventListener != null ? mReloadEventListener.hashCode() : null ) + " URI=" + fullUrl);
 		if (parser == this && mReloadEventListener != null) // We're reloading
 		{
-			mReloadEventListener.onReloadComplete(this);
+			postReloadComplete(this);
 		}
 		else
 		{
+            if(manifestParsers.contains(parser) == false)
+            {
+                Log.e("ManifestParser.onParserComplete(" + instanceCount + ")", "didn't find completed parser in our list, aborting to avoid infinite loop.");
+                return;
+            }
+
 			manifestParsers.remove(parser);
 			announceIfComplete();
 		}
 	}
+	
+	// This happens in the parent
+	public void reload(ReloadEventListener reloadListener)
+	{
+		Log.i("ManifestParser.reload(" + instanceCount + ")", "Reloading type=" + type + " listenerHash=" + reloadListener.hashCode() + " URI=" + fullUrl);
+		mReloadParent = true; // We are the parent
+		
+		if (mReloadingManifest != null) 
+		{
+			mReloadingManifest.setReloadEventListener(null);
+			mReloadingManifest = null;
+		}
+		
+		mReloadingManifest = new ManifestParser(); // This is creating the child that will be used to actually parse the update
+		mReloadingManifest.type = type;
+		mReloadingManifest.quality = quality;
+		mReloadingManifest.setReloadEventListener(reloadListener);
+		mReloadingManifest.reload(this);
+	}
 
-	public void reload(ManifestParser manifest)
+	// This happens in the child
+	private void reload(final ManifestParser manifest)
 	{
 		// When the URLLoader finishes, it should set the parseComplete listener to *this*, and
 		// when that completes, it should call the reloadCompleteListener
+		mReloadParent = false; // we are not the parent
+		mReloadingManifest = manifest; // This is setting the parent - the one we're trying to reload
 		fullUrl = manifest.fullUrl;
-		URLLoader manifestLoader = new URLLoader(this, null);
-		manifestLoader.get(fullUrl);
-	}
-	
-	private void onSubtitleLoaded(Event e)
-	{
-		Log.i("ManifestParser.onSubtitleLoaded", "SUBTITLE LOADED");
-		_subtitlesLoading--;
-		announceIfComplete();
+		final ManifestParser self = this;
+		
+		HLSPlayerViewController.postToHTTPResponseThread( new Runnable() 
+		{
+			@Override
+			public void run()
+			{
+				URLLoader manifestLoader = new URLLoader("ManifestParser(" + instance() + ").reload(" + manifest.instance() + ")", self, null);
+				manifestLoader.get(fullUrl);
+				
+			}
+		} );
 	}
 	
 	private void announceIfComplete()
 	{
-		if (_subtitlesLoading == 0 && manifestParsers.size() == 0 && manifestLoaders.size() == 0)
+		Log.i("ManifestParser.announceIfComplete()", "_subtitles = " + _subtitlesLoading);
+		if (manifestParsers.size() == 0 && manifestLoaders.size() == 0)
 		{
 			verifyManifestItemIntegrity();
-			//PostEvent (COMPLETE);
-			if (mOnParseCompleteListener != null) mOnParseCompleteListener.onParserComplete(this);
+			postParseComplete(this);
 		}
 	}
+
+	public int getReloadFailureCount()
+	{
+		return mReloadFailureCount;
+	}
 	
+	public void incrementReloadFailureCount(int count)
+	{
+		++mReloadFailureCount;
+	}
+	
+	public void clearReloadFailureCount()
+	{
+		mReloadFailureCount = 0;
+	}
 	
 	public interface ReloadEventListener
 	{
@@ -414,32 +623,58 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 	{
 		mReloadEventListener = listener;
 	}
+	public void postReloadComplete(ManifestParser parser)
+	{
+		Log.i("ManifestParser(" + instanceCount + ").postReloadComplete", "Reload Complete for Parent=" + mReloadingManifest.instance());
+		if (mReloadEventListener != null) mReloadEventListener.onReloadComplete(parser.getReloadParent()); // We're passing out the parent
+	}
+	
+	public void postReloadFailed(ManifestParser parser)
+	{
+		Log.i("ManifestParser(" + instanceCount + ").reloadFailed", "Reloading type=" + type + " listenerHash=" + ( mReloadEventListener != null ? mReloadEventListener.hashCode() : null )+ " URI=" + fullUrl);
+		if (mReloadEventListener != null) mReloadEventListener.onReloadFailed(parser.getReloadChild()); // We're passing out the parent
+ 	}
+	
+	public void notifyReloadComplete()
+	{
+		if (mReloadParent)
+			mReloadingManifest = null;
+	}
 	
 	// Event Listeners
 	public void setOnParseCompleteListener(OnParseCompleteListener listener)
 	{
 		mOnParseCompleteListener = listener;
 	}
+	
+	
+	public void setOnParseCompleteListener(OnParseCompleteListener listener, int playId)
+	{
+		videoPlayId = playId;
+		mOnParseCompleteListener = listener;
+	}
 	private OnParseCompleteListener mOnParseCompleteListener;
-//	
-//	
-//	public void setOnLoadErrorListener(OnLoadErrorListener listener)
-//	{
-//		mOnLoadErrorListener = listener;
-//	}
-//	private OnLoadErrorListener mOnLoadErrorListener;
-//	
-//	public void setOnReloadErrorListener(OnReloadErrorListener listener)
-//	{
-//		mOnReloadErrorListener = listener;
-//	}
-//	
-//	private OnReloadErrorListener mOnReloadErrorListener; 
-//	
-//	public void setOnReloadCompleteListener(OnReloadCompleteListener listener)
-//	{
-//		mOnReloadCompleteListener = listener;
-//	}
-//	
-//	private OnReloadCompleteListener mOnReloadCompleteListener;
+	public void postParseComplete(ManifestParser parser)
+	{
+		if (mOnParseCompleteListener != null) mOnParseCompleteListener.onParserComplete(parser);
+	}
+	
+	
+	public void logSegments(String tag)
+	{
+		for (ManifestSegment s : segments)
+			Log.i(tag + " Manifest[" + instance() + "]", "Segment: " + s);
+	}
+	
+	
+	public ManifestSegment findSegmentByID(int id)
+	{
+		for (int i = segments.size() - 1; i >= 0; --i)
+		{
+			if (segments.get(i).id == id)
+				return segments.get(i);
+		}
+		return null;
+	}
+
 }

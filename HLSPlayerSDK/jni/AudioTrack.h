@@ -11,8 +11,10 @@
 #include <jni.h>
 #include <androidVideoShim.h>
 #include <semaphore.h>
+#include <RefCounted.h>
+#include <AudioPlayer.h>
 
-class AudioTrack {
+class AudioTrack : public AudioPlayer {
 public:
 	AudioTrack(JavaVM* jvm);
 	~AudioTrack();
@@ -20,19 +22,32 @@ public:
 	bool Init();
 	void Close();
 
+	virtual void unload(); // from RefCounted
+
 	bool Start();
 	void Play();
 	void Pause();
-	bool Stop();
+	void Flush();
+	bool Stop(bool seeking = false);
 
 	bool Set(android_video_shim::sp<android_video_shim::MediaSource> audioSource, bool alreadyStarted = false);
 	bool Set23(android_video_shim::sp<android_video_shim::MediaSource23> audioSource, bool alreadyStarted = false);
+	void ClearAudioSource();
 
-	bool Update();
+	int Update();
 
 	int64_t GetTimeStamp();
 
+	void forceTimeStampUpdate();
+
+	int getBufferSize();
+
+	bool UpdateFormatInfo();
+
+	bool ReadUntilTime(double timeSecs);
 private:
+	void SetTimeStampOffset(double offsetSecs);
+
 	jclass mCAudioTrack;
 	jmethodID mAudioTrack;
 	jmethodID mGetMinBufferSize;
@@ -42,9 +57,12 @@ private:
 	jmethodID mRelease;
 	jmethodID mGetTimestamp;
 	jmethodID mWrite;
+	jmethodID mFlush;
+	jmethodID mSetPositionNotificationPeriod;
 	jmethodID mGetPlaybackHeadPosition;
 
 	jobject mTrack;
+	jarray buffer;
 
 	JavaVM* mJvm;
 
@@ -57,8 +75,16 @@ private:
 	int mBufferSizeInBytes;
 
 	int mPlayState;
+	bool mWaiting;
+
+	double mTimeStampOffset;
+	bool mNeedsTimeStampOffset;
+
+	long long samplesWritten;
 
 	sem_t semPause;
+    pthread_mutex_t updateMutex;
+    pthread_mutex_t lock;
 
 };
 

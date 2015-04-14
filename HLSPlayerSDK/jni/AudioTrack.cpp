@@ -8,23 +8,44 @@
 #include <jni.h>
 #include "constants.h"
 #include <AudioTrack.h>
+#include "HLSPlayerSDK.h"
+#include "HLSPlayer.h"
+#include <unistd.h>
+
+extern HLSPlayerSDK* gHLSPlayerSDK;
 
 
 using namespace android_video_shim;
 
-AudioTrack::AudioTrack(JavaVM* jvm) : mJvm(jvm), mAudioTrack(NULL), mGetMinBufferSize(NULL), mPlay(NULL), mPause(NULL), mStop(NULL),
-										mRelease(NULL), mGetTimestamp(NULL), mCAudioTrack(NULL), mWrite(NULL), mGetPlaybackHeadPosition(NULL),
-										mSampleRate(0), mNumChannels(0), mBufferSizeInBytes(0), mChannelMask(0), mTrack(NULL), mPlayState(STOPPED)
+AudioTrack::AudioTrack(JavaVM* jvm) : mJvm(jvm), mAudioTrack(NULL), mGetMinBufferSize(NULL), mPlay(NULL), mPause(NULL), mStop(NULL), mFlush(NULL), buffer(NULL),
+										mRelease(NULL), mGetTimestamp(NULL), mCAudioTrack(NULL), mWrite(NULL), mGetPlaybackHeadPosition(NULL), mSetPositionNotificationPeriod(NULL),
+										mSampleRate(0), mNumChannels(0), mBufferSizeInBytes(0), mChannelMask(0), mTrack(NULL), mPlayState(INITIALIZED),
+										mTimeStampOffset(0), samplesWritten(0), mWaiting(true), mNeedsTimeStampOffset(true)
 {
-	// TODO Auto-generated constructor stub
 	if (!mJvm)
 	{
 		LOGE("Java VM is NULL");
 	}
+
+	int err = pthread_mutex_init(&updateMutex, NULL);
+	LOGI(" AudioTrack mutex err = %d", err);
+	err = pthread_mutex_init(&lock, NULL);
+
 }
 
 AudioTrack::~AudioTrack() {
-	// TODO Auto-generated destructor stub
+}
+
+void AudioTrack::unload()
+{
+	LOGI("Unloading");
+	if (mTrack)
+	{
+		// we're not closed!!!
+		LOGI("Closing");
+		Close();
+	}
+	delete this;
 }
 
 void AudioTrack::Close()
@@ -33,17 +54,21 @@ void AudioTrack::Close()
 	if (mJvm)
 	{
 		JNIEnv* env = NULL;
-		mJvm->AttachCurrentThread(&env, NULL);
-		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mStop);
-		env->DeleteGlobalRef(mTrack);
+		gHLSPlayerSDK->GetEnv(&env);
+		if (env)
+		{
+			env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mStop);
+			env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mRelease);
+			env->DeleteGlobalRef(buffer);
+			env->DeleteGlobalRef(mTrack);
+			env->DeleteGlobalRef(mCAudioTrack);
+		}
+		buffer = NULL;
 		mTrack = NULL;
-		env->DeleteGlobalRef(mCAudioTrack);
 		mCAudioTrack = NULL;
 
-		if(mAudioSource.get())
-			mAudioSource->stop();
-		if(mAudioSource23.get())
-			mAudioSource23->stop();
+		clearOMX(mAudioSource);
+		clearOMX(mAudioSource23);
 
 		sem_destroy(&semPause);
 	}
@@ -57,7 +82,15 @@ bool AudioTrack::Init()
 		return false;
 	}
 	JNIEnv* env = NULL;
-	mJvm->GetEnv((void**)&env, JNI_VERSION_1_2);
+	if (!gHLSPlayerSDK->GetEnv(&env)) return false;
+
+
+	int err = sem_init(&semPause, 0, 0);
+	if (err != 0)
+	{
+		LOGE("Failed to init audio pause semaphore : %d", err);
+		return false;
+	}
 
     if (!mCAudioTrack)
     {
@@ -81,66 +114,68 @@ bool AudioTrack::Init()
         mPlay = env->GetMethodID(mCAudioTrack, "play", "()V");
         mStop = env->GetMethodID(mCAudioTrack, "stop", "()V");
         mPause = env->GetMethodID(mCAudioTrack, "pause", "()V");
+        mFlush = env->GetMethodID(mCAudioTrack, "flush", "()V");
         mRelease = env->GetMethodID(mCAudioTrack, "release", "()V");
         mWrite = env->GetMethodID(mCAudioTrack, "write", "([BII)I");
+        mSetPositionNotificationPeriod = env->GetMethodID(mCAudioTrack, "setPositionNotificationPeriod", "(I)I");
         mGetPlaybackHeadPosition = env->GetMethodID(mCAudioTrack, "getPlaybackHeadPosition", "()I");
     }
     return true;
 }
 
+void AudioTrack::ClearAudioSource()
+{
+	Set(NULL, true);
+	Set23(NULL, true);
+}
 
 bool AudioTrack::Set(sp<MediaSource> audioSource, bool alreadyStarted)
 {
+	if (mAudioSource.get())
+	{
+		mAudioSource->stop();
+		mAudioSource.clear();
+	}
+
 	LOGI("Set with %p", audioSource.get());
 	mAudioSource = audioSource;
-	if (!alreadyStarted) mAudioSource->start(NULL);
+	if (!alreadyStarted && mAudioSource.get()) mAudioSource->start(NULL);
 
-	sp<MetaData> format = mAudioSource->getFormat();
-	RUNDEBUG(format->dumpToLog());
-	const char* mime;
-	bool success = format->findCString(kKeyMIMEType, &mime);
-	if (!success)
-	{
-		LOGE("Could not find mime type");
-		return false;
-	}
-	if (strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_RAW))
-	{
-		LOGE("Mime Type was not audio/raw. Was: %s", mime);
-		return false;
-	}
-	success = format->findInt32(kKeySampleRate, &mSampleRate);
-	if (!success)
-	{
-		LOGE("Could not find audio sample rate");
-		return false;
-	}
-
-	success = format->findInt32(kKeyChannelCount, &mNumChannels);
-	if (!success)
-	{
-		LOGE("Could not find channel count");
-		return false;
-	}
-	if (!format->findInt32(kKeyChannelMask, &mChannelMask))
-	{
-		if (mNumChannels > 2)
-		{
-			LOGI("Source format didn't specify channel mask. Using (%d) channel order", mNumChannels);
-		}
-		mChannelMask = 0; // CHANNEL_MASK_USE_CHANNEL_ORDER
-	}
+	mWaiting = false;
+	return UpdateFormatInfo();
 }
 
 
 bool AudioTrack::Set23(sp<MediaSource23> audioSource, bool alreadyStarted)
 {
+	if (mAudioSource23.get())
+		mAudioSource23->stop();
+
 	LOGI("Set23 with %p", audioSource.get());
 	mAudioSource23 = audioSource;
-	if (!alreadyStarted) mAudioSource23->start(NULL);
+	if (!alreadyStarted && mAudioSource23.get()) mAudioSource23->start(NULL);
+	mWaiting = false;
+	return UpdateFormatInfo();
+}
 
-	sp<MetaData> format = mAudioSource23->getFormat();
-	RUNDEBUG(format->dumpToLog());
+bool AudioTrack::UpdateFormatInfo()
+{
+	sp<MetaData> format;
+	if(mAudioSource.get())
+		format = mAudioSource->getFormat();
+	else if(mAudioSource23.get())
+		format = mAudioSource23->getFormat();
+	else
+	{
+		LOGE("We do not have an audio source. Setting a base format for feeding silence.");
+		mSampleRate=44100;
+		mNumChannels = 2;
+		mChannelMask = 0;
+		return true;
+	}
+
+	format->dumpToLog();
+
 	const char* mime;
 	bool success = format->findCString(kKeyMIMEType, &mime);
 	if (!success)
@@ -153,6 +188,7 @@ bool AudioTrack::Set23(sp<MediaSource23> audioSource, bool alreadyStarted)
 		LOGE("Mime Type was not audio/raw. Was: %s", mime);
 		return false;
 	}
+
 	success = format->findInt32(kKeySampleRate, &mSampleRate);
 	if (!success)
 	{
@@ -166,6 +202,7 @@ bool AudioTrack::Set23(sp<MediaSource23> audioSource, bool alreadyStarted)
 		LOGE("Could not find channel count");
 		return false;
 	}
+	
 	if (!format->findInt32(kKeyChannelMask, &mChannelMask))
 	{
 		if (mNumChannels > 2)
@@ -174,6 +211,8 @@ bool AudioTrack::Set23(sp<MediaSource23> audioSource, bool alreadyStarted)
 		}
 		mChannelMask = 0; // CHANNEL_MASK_USE_CHANNEL_ORDER
 	}
+
+	return true;
 }
 
 #define STREAM_MUSIC 3
@@ -186,21 +225,42 @@ bool AudioTrack::Set23(sp<MediaSource23> audioSource, bool alreadyStarted)
 
 bool AudioTrack::Start()
 {
+	LOGTRACE("%s", __func__);
+	AutoLock locker(&lock);
 
-//	audio_format_t audioFormat = AUDIO_FORMAT_PCM_16_BIT;
-//
-//	int avgBitRate = -1;
-//	format->findInt32(kKeyBitRate, &avgBitRate);
-
+	LOGI("Attaching to current java thread");
 	JNIEnv* env;
-	mJvm->AttachCurrentThread(&env, NULL);
+	if (!gHLSPlayerSDK->GetEnv(&env)) return false;
 
+	LOGI("Setting buffer = NULL");
+	if (buffer)
+	{
+		env->DeleteGlobalRef(buffer);
+		buffer = NULL;
+	}
+
+
+	LOGI("Updating Format Info");
+	// Refresh our format information.
+	if(!UpdateFormatInfo())
+	{
+		LOGE("Failed to update format info!");
+		return false;
+	}
+
+	if(mSampleRate == 0)
+	{
+		LOGE("Zero sample rate");
+		return false;
+	}
+
+	LOGI("Setting Channel Config");
 	int channelConfig = CHANNEL_CONFIGURATION_STEREO;
 	switch (mNumChannels)
 	{
 	case 1:
-//		channelConfig = CHANNEL_CONFIGURATION_MONO;
-//		break;
+		channelConfig = CHANNEL_CONFIGURATION_MONO;
+		break;
 	case 2:
 		channelConfig = CHANNEL_CONFIGURATION_STEREO;
 		break;
@@ -212,158 +272,402 @@ bool AudioTrack::Start()
 		break;
 	}
 
-	LOGI("mNumChannels=%d | channelConfig=%d | mSampleRate=%d", mNumChannels, channelConfig, mSampleRate);
+	LOGI("Creating AudioTrack mNumChannels=%d | channelConfig=%d | mSampleRate=%d", mNumChannels, channelConfig, mSampleRate);
 
-	mBufferSizeInBytes = env->CallStaticIntMethod(mCAudioTrack, mGetMinBufferSize, mSampleRate, channelConfig,ENCODING_PCM_16BIT) * 4; // HACK ALERT!! Note that this value was originally 2... this is a quick hack to test the audio sending since the media buffer I am seeing is exactly the same size as this value * 4
+	// HACK ALERT!! Note that this value was originally 2... this is a quick hack to test the audio sending since 
+	// the media buffer I am seeing is exactly the same size as this value * 4
+	mBufferSizeInBytes = env->CallStaticIntMethod(mCAudioTrack, mGetMinBufferSize, mSampleRate, channelConfig,ENCODING_PCM_16BIT) * 4; 
 
 	LOGI("mBufferSizeInBytes=%d", mBufferSizeInBytes);
 
-	int err = sem_init(&semPause, 0, 0);
-	if (err != 0)
+	// Release our old track.
+	if(mTrack)
 	{
-		LOGE("Failed to init audio pause semaphore : %d", err);
-		return false;
+		LOGI("Releasing old java AudioTrack");
+		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mRelease);
+		env->DeleteGlobalRef(mTrack);
+		mTrack = NULL;
 	}
 
+	LOGI("Generating java AudioTrack reference");
 	mTrack = env->NewGlobalRef(env->NewObject(mCAudioTrack, mAudioTrack, STREAM_MUSIC, mSampleRate, channelConfig, ENCODING_PCM_16BIT, mBufferSizeInBytes * 2, MODE_STREAM ));
+
+	LOGI("Calling java AudioTrack Play");
 	env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mPlay);
+	int lastPlayState = mPlayState;
+
 	mPlayState = PLAYING;
+
+	if (lastPlayState == PAUSED || lastPlayState == SEEKING || lastPlayState == INITIALIZED)
+	{
+		LOGI("Playing Audio Thread: state = %s | semPause.count = %d", lastPlayState==PAUSED?"PAUSED":(lastPlayState==SEEKING?"SEEKING":(lastPlayState==INITIALIZED?"INITIALIZED":"Not Possible!")), semPause.count );
+		sem_post(&semPause);
+	}
+	mWaiting = false;
+	samplesWritten = 0;
 	return true;
 
 }
 
 void AudioTrack::Play()
 {
-	if (mPlayState == PAUSED)
+	LOGTRACE("%s", __func__);
+	LOGI("Trying to play: state = %d", mPlayState);
+	mWaiting = false;
+	if (mPlayState == PLAYING) return;
+	int lastPlayState = mPlayState;
+
+	mPlayState = PLAYING;
+
+	if (lastPlayState == PAUSED || lastPlayState == SEEKING || lastPlayState == INITIALIZED)
 	{
+		LOGI("Playing Audio Thread: state = %s | semPause.count = %d", lastPlayState==PAUSED?"PAUSED":(lastPlayState==SEEKING?"SEEKING":(lastPlayState==INITIALIZED?"INITIALIZED":"Not Possible!")), semPause.count );
 		sem_post(&semPause);
 	}
-	if (mPlayState == PLAYING) return;
-	mPlayState = PLAYING;
-	sem_post(&semPause);
-	JNIEnv* env;
-	mJvm->AttachCurrentThread(&env, NULL);
-	env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mPlay);
 
+	LOGI("Audio State = PLAYING: semPause.count = %d", semPause.count);
+
+	JNIEnv* env;
+	if (gHLSPlayerSDK->GetEnv(&env))
+		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mPlay);
+
+	samplesWritten = 0;
 }
 
-bool AudioTrack::Stop()
+bool AudioTrack::Stop(bool seeking)
 {
-	if (mPlayState == PAUSED)
+	LOGTRACE("%s", __func__);
+	if (mPlayState == STOPPED && seeking == false) return true;
+
+	int lastPlayState = mPlayState;
+
+	if (seeking)
+		mPlayState = SEEKING;
+	else
+		mPlayState = STOPPED;
+
+	if (lastPlayState == PAUSED)
 	{
+		LOGI("Stopping Audio Thread: state = PAUSED | semPause.count = %d", semPause.count );
 		sem_post(&semPause);
 	}
-	if (mPlayState == STOPPED) return true;
-	mPlayState = STOPPED;
+	else if (lastPlayState == SEEKING)
+	{
+		LOGI("Stopping Audio Thread: state = SEEKING | semPause.count = %d", semPause.count );
+		sem_post(&semPause);
+	}
+
+	pthread_mutex_lock(&updateMutex);
+
+	if(seeking)
+	{
+		clearOMX(mAudioSource);
+		clearOMX(mAudioSource23);
+	}
+
 	JNIEnv* env;
-	mJvm->AttachCurrentThread(&env, NULL);
-	env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mStop);
+	if (gHLSPlayerSDK->GetEnv(&env))
+		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mStop);
+
+	pthread_mutex_unlock(&updateMutex);
+
 	return true;
 }
 
 void AudioTrack::Pause()
 {
+	LOGTRACE("%s", __func__);
 	if (mPlayState == PAUSED) return;
 	mPlayState = PAUSED;
 	JNIEnv* env;
-	mJvm->AttachCurrentThread(&env, NULL);
-	env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mPause);
+	if (gHLSPlayerSDK->GetEnv(&env))
+		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mPause);
 }
+
+void AudioTrack::Flush()
+{
+	LOGTRACE("%s", __func__);
+	if (mPlayState == PLAYING) return;
+	JNIEnv* env;
+	if (gHLSPlayerSDK->GetEnv(&env))
+		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mFlush);
+	
+	pthread_mutex_lock(&updateMutex);
+	samplesWritten = 0;
+	pthread_mutex_unlock(&updateMutex);
+
+}
+
+void AudioTrack::forceTimeStampUpdate()
+{
+	LOGTRACE("%s", __func__);
+	mNeedsTimeStampOffset = true;
+}
+
+void AudioTrack::SetTimeStampOffset(double offsetSecs)
+{
+	LOGTRACE("%s", __func__);
+	LOGTIMING("Setting mTimeStampOffset to: %f", offsetSecs);
+	mTimeStampOffset = offsetSecs;
+	mNeedsTimeStampOffset = false;
+}
+
 
 int64_t AudioTrack::GetTimeStamp()
 {
+	LOGTRACE("%s", __func__);
 	JNIEnv* env;
-	mJvm->AttachCurrentThread(&env, NULL);
+	if (!gHLSPlayerSDK->GetEnv(&env)) return 0;
+	if(!mTrack)
+	{
+		LOGI("No track! aborting...");
+		return mTimeStampOffset;
+	}
+
+	AutoLock locker(&lock);
 	double frames = env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mGetPlaybackHeadPosition);
 	double secs = frames / (double)mSampleRate;
-	return (secs * 1000000);
+	LOGTIMING("TIMESTAMP: secs = %f | mTimeStampOffset = %f | timeStampUS = %lld", secs, mTimeStampOffset, (int64_t)((secs + mTimeStampOffset) * 1000000));
+	return ((secs + mTimeStampOffset) * 1000000);
 }
 
-
-bool AudioTrack::Update()
+bool AudioTrack::ReadUntilTime(double timeSecs)
 {
+	LOGTRACE("%s", __func__);
+	status_t res = ERROR_END_OF_STREAM;
+	MediaBuffer* mediaBuffer = NULL;
+
+	int64_t targetTimeUs = (int64_t)(timeSecs * 1000000.0f);
+	int64_t timeUs = 0;
+
+	LOGI("Starting read to %f seconds: targetTimeUs = %lld", timeSecs, targetTimeUs);
+	while (timeUs < targetTimeUs)
+	{
+		if(mAudioSource.get())
+			res = mAudioSource->read(&mediaBuffer, NULL);
+		else if(mAudioSource23.get())
+			res = mAudioSource23->read(&mediaBuffer, NULL);
+		else
+		{
+			// Set timeUs to our target, and let the loop fall out so that we can get the timestamp
+			// set properly.
+			timeUs = targetTimeUs;
+			continue;
+		}
+
+
+		if (res == OK)
+		{
+			bool rval = mediaBuffer->meta_data()->findInt64(kKeyTime, &timeUs);
+			if (!rval)
+			{
+				LOGI("Frame did not have time value: STOPPING");
+				timeUs = 0;
+			}
+
+			//LOGI("Finished reading from the media buffer");
+			RUNDEBUG(mediaBuffer->meta_data()->dumpToLog());
+			LOGTIMING("key time = %lld | target time = %lld", timeUs, targetTimeUs);
+		}
+		else if (res == INFO_FORMAT_CHANGED)
+		{
+		}
+		else if (res == ERROR_END_OF_STREAM)
+		{
+			LOGE("End of Audio Stream");
+			return false;
+		}
+
+		if (mediaBuffer != NULL)
+		{
+			mediaBuffer->release();
+			mediaBuffer = NULL;
+		}
+
+		sched_yield();
+	}
+
+	mTimeStampOffset = ((double)timeUs / 1000000.0f);
+	return true;
+}
+
+int AudioTrack::Update()
+{
+	LOGTRACE("%s", __func__);
+	LOGTHREAD("Audio Update Thread Running");
+	if (mWaiting) return AUDIOTHREAD_WAIT;
 	if (mPlayState != PLAYING)
 	{
-		while (mPlayState == PAUSED)
+		while (mPlayState == INITIALIZED)
+		{
+			LOGI("Audio Thread initialized. Waiting to start | semPause.count = %d", semPause.count);
 			sem_wait(&semPause);
+		}
+
+		while (mPlayState == PAUSED)
+		{
+			LOGI("Pausing Audio Thread: state = PAUSED | semPause.count = %d", semPause.count );
+			sem_wait(&semPause);
+		}
+
+		while (mPlayState == SEEKING)
+		{
+			LOGI("Pausing Audio Thread: state = SEEKING | semPause.count = %d", semPause.count );
+			sem_wait(&semPause);
+			LOGI("Resuming Audio Thread: state = %d | semPause.count = %d", mPlayState, semPause.count );
+		}
 
 		if (mPlayState == STOPPED)
-			return false; // We don't really want to add more stuff to the buffer
+		{
+			LOGI("mPlayState == STOPPED. Ending audio update thread!");
+			return AUDIOTHREAD_FINISH; // We don't really want to add more stuff to the buffer
 							// and potentially run past the end of buffered source data
 							// if we're not actively playing
+		}
 	}
+
+
 	JNIEnv* env;
-	mJvm->AttachCurrentThread(&env, NULL);
+	if (!gHLSPlayerSDK->GetEnv(&env))
+		return AUDIOTHREAD_FINISH; // If we don't have a java environment at this point, something has killed it,
+								   // so we better kill the thread.
+
+	pthread_mutex_lock(&updateMutex);
 
 	MediaBuffer* mediaBuffer = NULL;
 
 	//LOGI("Reading to the media buffer");
-	status_t res;
-	
+	status_t res = OK;
+
 	if(mAudioSource.get())
 		res = mAudioSource->read(&mediaBuffer, NULL);
-	
-	if(mAudioSource23.get())
+	else if(mAudioSource23.get())
 		res = mAudioSource23->read(&mediaBuffer, NULL);
+	else
+	{
+		res = OK;
+	}
 
-	//LOGI("Finished reading from the media buffer");
+
+
 	if (res == OK)
 	{
-		RUNDEBUG(mediaBuffer->meta_data()->dumpToLog());
+		//LOGI("Finished reading from the media buffer");
+		RUNDEBUG( {if (mediaBuffer) mediaBuffer->meta_data()->dumpToLog();} );
 		env->PushLocalFrame(2);
 
-		jarray buffer = env->NewByteArray(mBufferSizeInBytes);
+		if(!buffer)
+		{
+			buffer = env->NewByteArray(mBufferSizeInBytes);
+			buffer = (jarray)env->NewGlobalRef(buffer);
+		}
 
 		void* pBuffer = env->GetPrimitiveArrayCritical(buffer, NULL);
 
 		if (pBuffer)
 		{
-			size_t mbufSize = mediaBuffer->range_length();
-			//LOGI("MediaBufferSize = %d, mBufferSizeInBytes = %d", mbufSize, mBufferSizeInBytes );
-			if (mbufSize <= mBufferSizeInBytes)
+			if (mediaBuffer)
 			{
-				//LOGI("Writing data to jAudioTrack %d", mbufSize);
-				memcpy(pBuffer, mediaBuffer->data(), mbufSize);
-				unsigned short* pBShorts = (unsigned short*)pBuffer;
-				//LOGV("%hd %hd %hd %hd", pBShorts[0], pBShorts[1], pBShorts[2], pBShorts[3]);
-				int len = mbufSize / 2;
-				//LOGV("%hd %hd %hd %hd", pBShorts[len - 4], pBShorts[len - 3], pBShorts[len - 2], pBShorts[len - 1]);
+				int64_t timeUs;
+				bool rval = mediaBuffer->meta_data()->findInt64(kKeyTime, &timeUs);
+				if (!rval)
+				{
+					timeUs = 0;
 
-				env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
-				//LOGI("Finished copying audio data to buffer");
-				env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, mbufSize  );
-				//LOGI("Finished Writing Data to jAudioTrack");
+				}
+				LOGI("Audiotrack timeUs=%lld | mNeedsTimeStampOffset=%s", timeUs, mNeedsTimeStampOffset ? "True":"False");
+
+				// If we need the timestamp offset (our audio starts at 0, which is not quite accurate and won't match
+				// the video time), set it. This should only be the case when we first start a stream.
+				if (mNeedsTimeStampOffset)
+				{
+					LOGTIMING("Need to set mTimeStampOffset = %lld", timeUs);
+					SetTimeStampOffset(((double)timeUs / 1000000.0f));
+				}
+
+				size_t mbufSize = mediaBuffer->range_length();
+				//LOGI("MediaBufferSize = %d, mBufferSizeInBytes = %d", mbufSize, mBufferSizeInBytes );
+				if (mbufSize <= mBufferSizeInBytes)
+				{
+					//LOGI("Writing data to jAudioTrack %d", mbufSize);
+					memcpy(pBuffer, mediaBuffer->data(), mbufSize);
+					unsigned short* pBShorts = (unsigned short*)pBuffer;
+					//LOGV("%hd %hd %hd %hd", pBShorts[0], pBShorts[1], pBShorts[2], pBShorts[3]);
+					int len = mbufSize / 2;
+					//LOGV("%hd %hd %hd %hd", pBShorts[len - 4], pBShorts[len - 3], pBShorts[len - 2], pBShorts[len - 1]);
+
+					env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+					//LOGI("Finished copying audio data to buffer");
+					samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, mbufSize  );
+					//LOGI("Finished Writing Data to jAudioTrack");
+				}
+				else
+				{
+					LOGI("MediaBufferSize > mBufferSizeInBytes");
+				}
 			}
 			else
 			{
-				LOGI("MediaBufferSize > mBufferSizeInBytes");
+				LOGV("Writing zeros to the audio buffer");
+				memset(pBuffer, 0, mBufferSizeInBytes);
+				int len = mBufferSizeInBytes / 2;
+				env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+				samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, mBufferSizeInBytes  );
 			}
 		}
 
 		env->PopLocalFrame(NULL);
-
+		
 	}
 	else if (res == INFO_FORMAT_CHANGED)
 	{
+		LOGI("Format Changed");
+
+		// Flush our existing track.
+		Flush();
+
+		// Create new one.
+		Start();
+
+		pthread_mutex_unlock(&updateMutex);
 		Update();
 	}
 	else if (res == ERROR_END_OF_STREAM)
 	{
 		LOGE("End of Audio Stream");
-		mJvm->DetachCurrentThread();
-		return false;
+		mWaiting = true;
+		if (gHLSPlayerSDK)
+		{
+			if (gHLSPlayerSDK->GetPlayer())
+			{
+				gHLSPlayerSDK->GetPlayer()->SetState(FOUND_DISCONTINUITY);
+			}
+		}
+		pthread_mutex_unlock(&updateMutex);
+		return AUDIOTHREAD_WAIT;
 	}
-
-	mJvm->DetachCurrentThread();
 
 	if (mediaBuffer != NULL)
-	{
 		mediaBuffer->release();
-	}
 
-	return true;
-
-
+	pthread_mutex_unlock(&updateMutex);
+	return AUDIOTHREAD_CONTINUE;
 }
 
 
+int AudioTrack::getBufferSize()
+{
+	LOGTRACE("%s", __func__);
+	JNIEnv* env;
+	if (!gHLSPlayerSDK->GetEnv(&env)) return 0;
+
+	if(!mTrack)
+	{
+		LOGE("No track! aborting...");
+		return 0;
+	}
+
+	long long frames = env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mGetPlaybackHeadPosition);
+
+	return (samplesWritten / 2) - frames;
+}

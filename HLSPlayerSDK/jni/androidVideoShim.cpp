@@ -1,7 +1,6 @@
 #include "androidVideoShim.h"
 
-#define _REALLY_INCLUDE_SYS__SYSTEM_PROPERTIES_H_
-#include <sys/_system_properties.h>
+#include <sys/system_properties.h>
 
 static int property_get(const char *key, char *value, const char *default_value)
 {
@@ -23,8 +22,23 @@ namespace android_video_shim
     int gAPILevel = -1;
 
     // Libraries to search, in priority order.
-    static int gLibCount = 13;
+    static const int gLibCount = 28;
     static const char *gLibName[] = {
+		"/system/lib/arm/libstagefright.so",
+		"/system/lib/arm/libandroid.so",
+		"/system/lib/arm/libandroid_runtime.so",
+        "/system/lib/arm/libstagefright_hw.so",
+        "/system/lib/arm/libstagefright_foundation.so",
+		"/system/lib/arm/libstagefrighthw.so",
+		"/system/lib/arm/libstagefright_omx.so",
+		"/system/lib/arm/libstagefright_avc_common.so",
+		"/system/lib/arm/libstagefright_color_conversion.so",
+		"/system/lib/arm/libutils.so",
+		"/system/lib/arm/libmedia.so",
+		"/system/lib/arm/libstlport.so",
+		"/system/lib/arm/libsurfaceflinger.so",
+		"/system/lib/arm/libsurfaceflinger_client.so",
+		"/system/lib/arm/libI420colorconvert.so",
         "libandroid.so",
         "libandroid_runtime.so",
         "libstagefright.so",
@@ -37,7 +51,8 @@ namespace android_video_shim
         "libmedia.so",
         "libstlport.so",
         "libsurfaceflinger.so",
-        "libsurfaceflinger_client.so"
+        "libsurfaceflinger_client.so",
+        "libI420colorconvert.so"
     };
     static void *gLib[128];
     static int gLibsInitialized = 0;
@@ -68,7 +83,8 @@ namespace android_video_shim
                 return r;
         }
 
-        if(strErr) LOGI("   - dlerror %s for %s", strErr, symName);
+        if(strErr) LOGSYMBOLERROR("   - dlerror %s for %s", strErr, symName);
+
         return NULL;
     }
 
