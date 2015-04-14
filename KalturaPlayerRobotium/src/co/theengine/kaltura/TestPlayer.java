@@ -2,6 +2,7 @@ package co.theengine.kaltura;
 
 import android.app.Activity;
 import android.test.ActivityInstrumentationTestCase2;
+import android.widget.TextView;
 
 import com.robotium.solo.Solo;
 
@@ -86,7 +87,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		}
 		//*/
 	}
-	
+
 	/**
 	 * Sleep for the provided amount of milliseconds.
 	 */
@@ -95,23 +96,69 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	}
 	
 	/**
+	 * Toggle pause state on the stream.
+	 */
+	private void togglePause() {
+		solo.clickOnMenuItem("Play/Pause");
+	}
+	
+	/**
+	 * Play the stream from the specified menu item.
+	 */
+	private void playStream(String itemStream) {
+		solo.clickOnMenuItem("Streams");
+		sleep(500);
+		solo.clickOnMenuItem(itemStream, true);
+	}
+	
+	/**
+	 * Test the provided stream menu option by just playing it for a while.
+	 * @param itemStream	Menu option name to test.
+	 */
+	private void playTest(String itemStream) {
+		if (itemStream != "") playStream(itemStream);
+
+		screenshot();
+		for (int i = 0; i < 4; i++) {
+			sleep(15000);
+			screenshot();
+		}
+		
+		int time = getTime();
+		assertTrue(time > 1000);
+	}
+	
+	/**
+	 * Grab the current time in milliseconds from the displayed debug text.
+	 */
+	private int getTime() {
+		final TextView debug = (TextView) solo.getView("subTitleView");
+		String s = debug.getText().toString();
+		String timeStr = "Time: ";
+		int timeIndex = s.indexOf(timeStr);
+		if (timeIndex == -1) return -1;
+		int newlineIndex = s.indexOf("\n", timeIndex);
+		assertTrue(newlineIndex != -1);
+		return Integer.valueOf(s.substring(timeIndex+timeStr.length(), newlineIndex));
+	}
+	
+	/**
 	 * Test the provided stream menu option with screenshots and pause testing.
 	 * @param itemStream	Menu option name to test.
 	 */
 	private void streamTest(String itemStream) {
-		String itemPause = "Play/Pause";
 		
 		screenshot();
 		
-		solo.clickOnMenuItem(itemStream);
+		playStream(itemStream);
 		
 		for (int i = 0; i < 5; i++) {
 			sleep(5000);
 			screenshot();
 		}
 		
-		solo.clickOnMenuItem(itemPause);
-
+		togglePause();
+		
 		screenshot();
 		sleep(2500);
 
@@ -120,7 +167,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 
 		screenshot();
 		
-		solo.clickOnMenuItem(itemPause);
+		togglePause();
 
 		screenshot();
 		sleep(2500);
@@ -138,7 +185,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	 * Test seeking forward and backward on the provided stream menu item.
 	 */
 	private void seekTest(String itemStream) {
-		solo.clickOnMenuItem(itemStream);
+		playStream(itemStream);
 
 		screenshot();
 		sleep(3000);
@@ -176,12 +223,26 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	}
 	
 	/**
+	 * Test the playback of an already playing video that was started externally.
+	 */
+	public void testAutoPlay() {
+		playTest("");
+	}
+
+	/**
+	 * Test the playback of Kaltura video on demand via the menu option.
+	 */
+	public void testPlayKalturaVOD() {
+		playTest("Kaltura VoD");
+	}
+	
+	/**
 	 * Test the ABC live stream via the menu option.
 	 */
 	public void testABC() {
 		streamTest("ABC DVR");
 	}
-	
+
 	/**
 	 * Test the Kaltura video on demand via the menu option.
 	 */
@@ -190,34 +251,100 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	}
 
 	/**
+	 * Test the Folgers stream.
+	 */
+	public void testFolgers() {
+		streamTest("Folgers");
+	}
+
+	/**
+	 * Test the alternate audio VOD stream.
+	 */
+	public void testVODAltAudio() {
+		streamTest("VOD Alt Audio");
+	}
+	
+	public void testBibbop() {
+		streamTest("Bibbop");
+	}
+
+	public void testAESVOD() {
+		streamTest("AES VOD");
+	}
+
+	/**
+	 * Test playing a stream again after playing it the first time.
+	 */
+	public void testPlayTwice() {
+		playStream("ABC DVR");
+
+		screenshot();
+		sleep(2500);
+		screenshot();
+		sleep(2500);
+		screenshot();
+
+		playStream("ABC DVR");
+
+		screenshot();
+		sleep(2500);
+		screenshot();
+		sleep(2500);
+		screenshot();
+	}
+
+	/**
 	 * Test switching between ABC and Kaltura streams.
 	 */
 	public void testSwitch() {
-		solo.clickOnMenuItem("ABC DVR");
+		playStream("ABC DVR");
 
 		screenshot();
 		sleep(5000);
 		screenshot();
 		
-		solo.clickOnMenuItem("Kaltura VoD");
+		playStream("Kaltura VoD");
 
 		screenshot();
 		sleep(5000);
 		screenshot();
 		
-		solo.clickOnMenuItem("ABC DVR");
+		playStream("ABC DVR");
 		
 		screenshot();
 		sleep(5000);
 		screenshot();
 		
-		solo.clickOnMenuItem("Kaltura VoD");
+		playStream("Kaltura VoD");
 		
 		screenshot();
 		sleep(5000);
 		screenshot();
 	}
 
+	/**
+	 * Test playing a stream after pausing the previous one.
+	 */
+	public void testPlayAfterPause() {
+		playStream("Kaltura VoD");
+
+		screenshot();
+		sleep(5000);
+		screenshot();
+		
+		togglePause();
+		
+		screenshot();
+		sleep(3000);
+		screenshot();
+		
+		playStream("Folgers");
+
+		screenshot();
+		sleep(5000);
+		screenshot();
+	}
+	
 	/**
 	 * Test seeking forward and backward on the ABC DVR stream.
 	 */
@@ -232,9 +359,25 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		seekTest("Kaltura VoD");
 	}
 	
+	public void testFolgersSeek() {
+		seekTest("Folgers");
+	}
+
+	public void testVODAltAudioSeek() {
+		seekTest("VOD Alt Audio");
+	}
+	
+	public void testBibbopSeek() {
+		seekTest("Bibbop");
+	}
+	
+	public void testAESVODSeek() {
+		seekTest("AES VOD");
+	}
+	
 	private void streamRunTest(String itemStream) {
 		screenshot();
-		solo.clickOnMenuItem(itemStream);
+		playStream(itemStream);
 		screenshot();
 		sleep(2000);
 		screenshot();
@@ -270,7 +413,7 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 		sleep(1000);
 		screenshot();
 		
-		solo.clickOnMenuItem("ABC DVR");
+		playStream("ABC DVR");
 		screenshot();
 		
 		sleep(2000);
