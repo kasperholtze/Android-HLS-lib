@@ -2,6 +2,7 @@ package co.theengine.kaltura;
 
 import android.app.Activity;
 import android.test.ActivityInstrumentationTestCase2;
+import android.widget.TextView;
 
 import com.robotium.solo.Solo;
 
@@ -116,7 +117,29 @@ public class TestPlayer extends ActivityInstrumentationTestCase2<Activity> {
 	 */
 	private void playTest(String itemStream) {
 		playStream(itemStream);
-		sleep(60000);
+
+		screenshot();
+		for (int i = 0; i < 4; i++) {
+			sleep(15000);
+			screenshot();
+		}
+		
+		int time = getTime();
+		assertTrue(time > 1000);
+	}
+	
+	/**
+	 * Grab the current time in milliseconds from the displayed debug text.
+	 */
+	private int getTime() {
+		final TextView debug = (TextView) solo.getView("subTitleView");
+		String s = debug.getText().toString();
+		String timeStr = "Time: ";
+		int timeIndex = s.indexOf(timeStr);
+		if (timeIndex == -1) return -1;
+		int newlineIndex = s.indexOf("\n", timeIndex);
+		assertTrue(newlineIndex != -1);
+		return Integer.valueOf(s.substring(timeIndex+timeStr.length(), newlineIndex));
 	}
 	
 	/**
