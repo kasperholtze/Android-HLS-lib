@@ -868,6 +868,11 @@ bool HLSPlayer::InitSources()
 		LOGI("   - taking 4.x path");
 		LOGI("OMXCodec::Create - format=%p track=%p videoSource=%p", vidFormat.get(), mVideoTrack.get(), mVideoSource.get());
 		mVideoSource = OMXCodec::Create(iomx, vidFormat, false, mVideoTrack, "OMX.google.h264.decoder", 0);
+		if(!mVideoSource.get())
+		{
+			LOGI("OMXCodec::Create - failed to use google decoder, relying on system...");
+			mVideoSource = OMXCodec::Create(iomx, vidFormat, false, mVideoTrack, NULL, 0);
+		}
 		LOGI("   - got %p back", mVideoSource.get());
 	}
 	else
@@ -875,11 +880,22 @@ bool HLSPlayer::InitSources()
 		LOGV("   - taking 2.3 path");
 
 		LOGV("OMXCodec::Create - format=%p track=%p videoSource=%p", vidFormat.get(), mVideoTrack23.get(), mVideoSource23.get());
-		mVideoSource23 = OMXCodec::Create23(iomx, vidFormat, false, mVideoTrack23,  "OMX.google.h264.decoder", 0);
+		mVideoSource23 = OMXCodec::Create23(iomx, vidFormat, false, mVideoTrack23, "OMX.google.h264.decoder", 0);
+		if(!mVideoSource23.get())
+		{
+			LOGI("OMXCodec::Create - failed to use google decoder, relying on system...");
+			mVideoSource23 = OMXCodec::Create23(iomx, vidFormat, false, mVideoTrack23, NULL, 0);
+		}
 		LOGV("   - got %p back", mVideoSource23.get());
 	}
 	
 	LOGI("OMXCodec::Create() (video) returned 4x=%p 23=%p", mVideoSource.get(), mVideoSource23.get());
+
+	if(mVideoSource.get() == NULL && mVideoSource23.get() == NULL)
+	{
+		LOGE("OMXCodec::Create - failed to get a video decoder, aborting playback.");
+		return false;
+	}
 
 	sp<MetaData> meta;
 	if(AVSHIM_USE_NEWMEDIASOURCE)
