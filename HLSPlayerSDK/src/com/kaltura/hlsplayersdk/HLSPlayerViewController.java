@@ -490,10 +490,16 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	 * actually start.
 	 */
 	public void onParserComplete(final ManifestParser parser) {
-		if (parser == null || parser.hasSegments() == false)
+		if (parser == null || parser.hasSegments() == false || mManifest == null)
 		{
 			Log.w("PlayerViewController", "Manifest is null. Ending playback.");
 			postFatalError(OnErrorListener.MEDIA_ERROR_NOT_VALID, "No Valid Manifest");
+			return;
+		}
+		
+		if (parser != mManifest)
+		{
+			Log.i("PlayerViewController.onParserComplete", "Parser (" + parser.instance() + ") is not the same as the current manifest (" + mManifest.instance() + ")");
 			return;
 		}
 
@@ -657,6 +663,8 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	@Override
 	public void onDownloadComplete(URLLoader loader, String response) {
 		if (loader.videoPlayId != videoPlayId) return;
+		if (loader != manifestLoader) return;
+		
 		if (mManifest != null)
 		{
 			Log.e("PlayerViewController.onDownloadComplete", "Manifest is not NULL! Killing the old one and starting a new one.");
