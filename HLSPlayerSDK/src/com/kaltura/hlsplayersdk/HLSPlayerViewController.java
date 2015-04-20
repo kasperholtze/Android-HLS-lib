@@ -53,6 +53,11 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		VideoPlayerInterface, URLLoader.DownloadEventListener, OnParseCompleteListener, 
 		TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, SegmentCachedListener, KnowledgePrepHandler {
 
+	// Debug hacks!!!
+	private final boolean playKalturaVODonResume = false;
+	// No More Debug Hacks!!!
+	
+	
 	// State constants.
 	private final int STATE_STOPPED = 1;
 	private final int STATE_PAUSED = 2;
@@ -465,6 +470,15 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		if ((mStartingMS > 0 || mStartupState != STARTUP_STATE_WAITING_TO_START) && 
 				(mLastUrl.startsWith("http://") || mLastUrl.startsWith("https://")))
 		{
+			setStartupState(STARTUP_STATE_WAITING_TO_START);
+			mRestoringState = true;
+		}
+		
+		
+		// DEBUG HACK!
+		if (playKalturaVODonResume)
+		{
+			mLastUrl = "http://www.kaltura.com/p/0/playManifest/entryId/1_0i2t7w0i/format/applehttp";
 			setStartupState(STARTUP_STATE_WAITING_TO_START);
 			mRestoringState = true;
 		}

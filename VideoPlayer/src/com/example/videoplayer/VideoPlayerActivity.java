@@ -1,6 +1,9 @@
 package com.example.videoplayer;
 
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.Vector;
 
 import android.app.AlertDialog;
 import android.app.Activity;
@@ -20,6 +23,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.kaltura.hlsplayersdk.HLSPlayerViewController;
+import com.kaltura.hlsplayersdk.URLLoader;
 import com.kaltura.hlsplayersdk.types.PlayerStates;
 import com.kaltura.hlsplayersdk.QualityTrack;
 import com.kaltura.hlsplayersdk.cache.HLSSegmentCache;
@@ -46,6 +50,8 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 
 	private Thread mSoakThread = null;
 	private Runnable soakRunnable = new SoakerRunnable(this);
+	
+	private Timer debugTimer = null;
 
     @SuppressWarnings("unused")
 	@Override
@@ -88,6 +94,28 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
         		}
             } */
         }
+        
+        if (false)
+        {
+        	final VideoPlayerActivity vpa = this;
+	        debugTimer = new Timer();
+	        debugTimer.schedule(new TimerTask()
+			{
+	        	
+				public void run()
+				{
+					vpa.runOnUiThread(new Runnable() 
+						{
+						public void run() {
+				        	setVideoUrl("http://www.kaltura.com/p/0/playManifest/entryId/1_0i2t7w0i/format/applehttp");
+						}
+						
+						});
+				}
+				
+			}, 5000);
+        }
+        
     }
 
     private void initPlayerView()
