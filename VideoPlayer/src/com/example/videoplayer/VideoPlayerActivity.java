@@ -469,7 +469,8 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	public void onSubtitleText(double startTime, double length, String align, String buffer) {
 		Log.i("VideoPlayer.onSubtitleText", "Start: " + startTime + " | Length: " + length + " | " + buffer);
 		
-		subTitleText = "T:" + playerView.getCurrentPosition() + " S:" + startTime + " L:" + length + " A:" + align + "\n" + buffer;
+		if (playerView != null)
+			subTitleText = "T:" + playerView.getCurrentPosition() + " S:" + startTime + " L:" + length + " A:" + align + "\n" + buffer;
 		updateDebugText();
 
 	}
