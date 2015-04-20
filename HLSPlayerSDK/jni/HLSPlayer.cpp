@@ -98,7 +98,7 @@ void* audio_thread_func(void* arg)
 	refCount = audioTrack->release();
 	JavaVM* jvm = gHLSPlayerSDK->getJVM();
 	if (jvm) jvm->DetachCurrentThread();
-	LOGI("mJAudioTrack refCount = %d", refCount);
+	LOGI("mJAudioTrack refCount on exit = %d", refCount);
 	LOGTHREAD("audio_thread_func ENDING");
 	return NULL;
 }
@@ -752,23 +752,29 @@ bool HLSPlayer::CreateAudioPlayer()
 {
 	LOGTRACE("%s", __func__);
 	AutoLock locker(&lock, __func__);
-	LOGI("Constructing JAudioTrack");
+	LOGI("Constructing Audio Player");
 	mAudioPlayer = MakeAudioPlayer(mJvm, USE_OMX_AUDIO);
 	if (!mAudioPlayer)
 		return false;
 
 	if (!mAudioPlayer->Init())
 	{
-		LOGE("JAudioTrack::Init() failed - quitting CreateAudioPlayer");
+		LOGE("AudioPlayer::Init() failed - quitting CreateAudioPlayer");
 		mAudioPlayer->release();
 		mAudioPlayer = NULL;
 		return false;
 	}
+	else
+	{
+		LOGI("AudioPlayer::Init() succeeded");
+	}
 
+	LOGI("Creating audio thread");
 	if (pthread_create(&audioThread, NULL, audio_thread_func, (void*)mAudioPlayer  ) != 0)
 		return false;
 
 
+	LOGI("Setting Audio Sources");
 	if(mAudioSource.get())
 		mAudioPlayer->Set(mAudioSource);
 	else if (mAudioSource23.get())
@@ -1065,15 +1071,6 @@ bool HLSPlayer::Play(double time)
 		return false;
 	}
 
-
-	if (time > 0)
-	{
-		ReadUntilTime(time);
-		if (mAudioPlayer) mAudioPlayer->ReadUntilTime(time);
-	}
-
-	LOGI("Starting audio playback");
-
 #ifdef USE_AUDIO
 	if (!mAudioPlayer->Start())
 	{
@@ -1081,6 +1078,12 @@ bool HLSPlayer::Play(double time)
 		return false;
 	}
 #endif
+
+
+
+	LOGI("Starting audio playback");
+
+
 
 	LOGI("   OK! err=%d", err);
 	SetState(PLAYING);

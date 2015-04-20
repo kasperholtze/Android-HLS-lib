@@ -41,8 +41,6 @@ public class URLLoader extends AsyncHttpResponseHandler
 	
 	private boolean mComplete = false;
 	
-	
-	
 	private static int getNextHandle()
 	{
 		++urlHandleSource;
@@ -50,6 +48,8 @@ public class URLLoader extends AsyncHttpResponseHandler
 	}
 	
 	private int myUrlHandle = 0;
+	
+	public int getHandle() { return myUrlHandle; }
 	
 	public BaseManifestItem manifestItem = null;
 	public String uri;
@@ -260,7 +260,7 @@ public class URLLoader extends AsyncHttpResponseHandler
 		mComplete = true;
 		if (mDownloadEventListener != null)
 		{
-			Log.i("URLLoader [" + myUrlHandle + "].success[" + mTag + "]", "Posting To Interface Thread: " + uri);
+			Log.i("URLLoader [" + myUrlHandle + "].success[" + mTag + "]", "Posting To http response Thread: " + uri);
 			
 			// Post back to main thread to avoid re-entrancy problems
 			HLSPlayerViewController.postToHTTPResponseThread(new Runnable()

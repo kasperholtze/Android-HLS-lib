@@ -400,7 +400,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	 * Terminate render thread and shut down JNI resources.
 	 */
 	public void close() {
-		Log.i("PlayerViewController", "Closing resources.");
+		Log.i("PlayerViewController.close", "Closing resources.");
 		if (mRenderThread != null)
 		{
 			mRenderThread.interrupt();
@@ -423,16 +423,19 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			mStreamHandler = null;
 		}
 		currentController = null;
+		Log.i("PlayerViewController.close", "Resources closed");
 	}
 	
 	@Override
 	public void release()
     {
+		Log.i("HLSPlayerViewController.release", "Releasing (saving state, and then calling close()");
 		SharedPreferences sp = getContext().getSharedPreferences("hlsplayersdk", Context.MODE_PRIVATE);
 		Editor spe = sp.edit();
 		spe.clear();
 		spe.putString("lasturl", mLastUrl);
 		spe.putInt("playstate", GetState());
+		spe.putInt("startupstate", mStartupState);
 		spe.putInt("startms", mStartingMS);
 		spe.putInt("initialquality", mQualityLevel);
 		spe.putInt("initialaudiotrack", mStreamHandler != null ? mStreamHandler.altAudioIndex : 0);
@@ -451,18 +454,24 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		SharedPreferences sp = getContext().getSharedPreferences("hlsplayersdk", Context.MODE_PRIVATE);
 		mLastUrl = sp.getString("lasturl", "");
 		mInitialPlayState = sp.getInt("playstate", 0);
+		mStartupState = sp.getInt("startupstate", STARTUP_STATE_WAITING_TO_START);
 		mStartingMS = sp.getInt("startms", 0);
 		mInitialQualityLevel = sp.getInt("initialquality", 0);
 		mInitialAudioTrack = sp.getInt("initialaudiotrack", 0);
 		mInitialSubtitleTrack = sp.getInt("initialsubtitletrack", 0);
+		
+		Log.i("HLSPlayerViewController.recoverRelease", "StartupState[" + getStartupStateText(mStartupState) + "] mLastUrl=" + mLastUrl);
 
-		if (mStartingMS > 0)
+		if (mStartingMS > 0 || mStartupState != STARTUP_STATE_WAITING_TO_START)
+		{
+			setStartupState(STARTUP_STATE_WAITING_TO_START);
 			mRestoringState = true;
+		}
 
 		if (mRestoringState)
 		{
-			// we need to resume, somehow
-			post(new Runnable()
+			
+			Thread t = new Thread( new Runnable()
 			{
 				@Override
 				public void run() {
@@ -473,6 +482,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		        	play();
 				}
 			});
+			t.start();
 		}
 	}
 
@@ -662,8 +672,19 @@ public class HLSPlayerViewController extends RelativeLayout implements
 
 	@Override
 	public void onDownloadComplete(URLLoader loader, String response) {
-		if (loader.videoPlayId != videoPlayId) return;
-		if (loader != manifestLoader) return;
+		if (loader.videoPlayId != videoPlayId)
+		{
+			Log.i("HLSPlayerViewController.onDownloadComplete - URLLoader [" + loader.getHandle() + "]", "videoPlayId doesn't match " + loader.videoPlayId + " != " + videoPlayId);
+			
+			return;
+		}
+		if (loader != manifestLoader)
+		{
+			Log.i("HLSPlayerViewController.onDownloadComplete - URLLoader [" + loader.getHandle() + "]", "loader doesn't match " + loader + " != " + manifestLoader);
+			
+			return;
+		}
+
 		
 		if (mManifest != null)
 		{
@@ -763,6 +784,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		setStartupState(STARTUP_STATE_STARTED);
 		mStreamHandler.initialize(mSubtitleHandler);
 		PlayFile(((double)mStartingMS) / 1000.0f);
+    	if (mStartingMS != 0) seek(mStartingMS, false);
 		postPlayerStateChange(PlayerStates.PLAY);
 
 		if (mRestoringState)

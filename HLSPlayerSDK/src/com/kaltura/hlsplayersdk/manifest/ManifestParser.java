@@ -173,6 +173,8 @@ public class ManifestParser implements OnParseCompleteListener, URLLoader.Downlo
 		fullUrl = _fullUrl;
 		baseUrl = _fullUrl.substring(0, _fullUrl.lastIndexOf('/') + 1);
 		
+		Log.i("ManifestParser.parse[" + instance() + "]", "Parsing: " + _fullUrl);
+		
 		// Normalize line endings
 		input = input.replace("\r\n", "\n");
 		
