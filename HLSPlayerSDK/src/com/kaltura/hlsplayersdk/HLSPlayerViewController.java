@@ -468,9 +468,6 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			setStartupState(STARTUP_STATE_WAITING_TO_START);
 			mRestoringState = true;
 		}
-		
-		if (mLastUrl.length() == 0)
-			mRestoringState = false;
 
 		if (mRestoringState)
 		{
