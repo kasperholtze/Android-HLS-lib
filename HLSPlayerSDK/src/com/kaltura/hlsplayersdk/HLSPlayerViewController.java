@@ -462,11 +462,15 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		
 		Log.i("HLSPlayerViewController.recoverRelease", "StartupState[" + getStartupStateText(mStartupState) + "] mLastUrl=" + mLastUrl);
 
-		if (mStartingMS > 0 || mStartupState != STARTUP_STATE_WAITING_TO_START)
+		if ((mStartingMS > 0 || mStartupState != STARTUP_STATE_WAITING_TO_START) && 
+				(mLastUrl.startsWith("http://") || mLastUrl.startsWith("https://")))
 		{
 			setStartupState(STARTUP_STATE_WAITING_TO_START);
 			mRestoringState = true;
 		}
+		
+		if (mLastUrl.length() == 0)
+			mRestoringState = false;
 
 		if (mRestoringState)
 		{
