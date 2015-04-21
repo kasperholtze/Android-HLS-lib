@@ -54,6 +54,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	private Runnable soakRunnable = new SoakerRunnable(this);
 	
 	private Timer debugTimer = null;
+	private final boolean debugAutostartVideo = false;
 	
 	private SeekBar seekBar;
 	
@@ -105,7 +106,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
             } */
         }
         
-        if (false)
+        if (debugAutostartVideo)
         {
         	final VideoPlayerActivity vpa = this;
 	        debugTimer = new Timer();
