@@ -783,6 +783,13 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			return mStreamHandler.getDuration();
 		return -1;
 	}
+	
+	public int getPlaybackWindowStartTime()
+	{
+		if (mStreamHandler != null)
+			return mStreamHandler.getTimeWindowStart();
+		return 0;
+	}
 
 	public String getVideoUrl() {
 		return "Not Implemented";
@@ -1120,6 +1127,8 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			} );
 		}
 	}
+	
+
 	
 	@Override
 	public void registerPlayheadUpdate(OnPlayheadUpdateListener listener) {
