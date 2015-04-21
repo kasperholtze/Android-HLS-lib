@@ -1066,6 +1066,14 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 		return (int) (accum * 1000);
 
 	}
+	
+	public int getTimeWindowStart()
+	{
+		Vector<ManifestSegment> segments = getSegmentsForQuality( lastQuality );
+		if (segments.size() > 0)
+			return (int) (segments.get(0).startTime * 1000);
+		return 0;
+	}
 
 	public int getQualityLevels()
 	{
