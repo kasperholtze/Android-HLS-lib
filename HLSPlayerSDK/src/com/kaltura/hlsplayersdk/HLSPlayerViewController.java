@@ -874,7 +874,6 @@ public class HLSPlayerViewController extends RelativeLayout implements
                     Thread.sleep(100);
                 } catch (InterruptedException e) {
                     // TODO Auto-generated catch block
-                    e.printStackTrace();
                 }
                 postPlayerStateChange(PlayerStates.END);
             }
@@ -990,7 +989,6 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			if (mRenderThread != null) mRenderThread.join();
 		} catch (InterruptedException e1) {
 			// TODO Auto-generated catch block
-			e1.printStackTrace();
 		}
 		StopPlayer();
 		ResetPlayer();
@@ -1005,7 +1003,6 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			Thread.sleep(1000);
 		} catch (InterruptedException e) {
 			// TODO Auto-generated catch block
-			e.printStackTrace();
 		}
 	}
 	
