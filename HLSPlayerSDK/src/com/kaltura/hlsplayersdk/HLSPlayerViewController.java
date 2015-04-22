@@ -493,11 +493,12 @@ public class HLSPlayerViewController extends RelativeLayout implements
 
 					Log.i("VideoPlayer UI", " -----> Play " + mLastUrl);
 		            setVideoUrl(mLastUrl);
-		        	setVisibility(View.VISIBLE);
 		        	play();
 				}
 			});
 			t.start();
+        	setVisibility(View.VISIBLE);
+
 		}
 	}
 
