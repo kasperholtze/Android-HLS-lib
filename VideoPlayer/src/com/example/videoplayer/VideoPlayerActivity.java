@@ -648,8 +648,14 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 		Log.i("VideoPlayer.onStateChanged", "Player State changed to " + state.toString());
 
 
-		if (state == PlayerStates.END)
-			playerView.setVisibility(View.INVISIBLE);
+		if (playerView != null)
+		{
+			if (state == PlayerStates.END)
+				playerView.setVisibility(View.INVISIBLE);
+			if (state == PlayerStates.PLAY || state == PlayerStates.SEEKED)
+				playerView.setVisibility(View.VISIBLE);
+		}
+			
 
 		return true;
 	}

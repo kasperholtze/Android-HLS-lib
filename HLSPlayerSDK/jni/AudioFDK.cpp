@@ -649,7 +649,7 @@ int AudioFDK::Update()
 		res = OK;
 	}
 
-	if (res == OK)
+	if (res == OK && mTrack)
 	{
 		//LOGI("Finished reading from the media buffer");
 		RUNDEBUG( {if (mediaBuffer) mediaBuffer->meta_data()->dumpToLog();} );
@@ -768,10 +768,11 @@ int AudioFDK::Update()
 
 							if (offset + copySize > mBufferSizeInBytes)
 							{
-								LOGAUDIO("offset (%d) + sizeof(tmpBuffer) (%d) > mBufferSizeinBytes (%d) -- Writing to java audio track and getting new java buffer.", offset, BUFFER_SIZE, mBufferSizeInBytes);
 								// We need to empty our buffer and make a new one!!!
 								env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+								LOGAUDIO("offset (%d) + sizeof(tmpBuffer) (%d) > mBufferSizeinBytes (%d) -- Writing to java audio track and getting new java buffer.", offset, BUFFER_SIZE, mBufferSizeInBytes);
 								samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, offset  );
+
 
 								pBuffer = env->GetPrimitiveArrayCritical(buffer, NULL);
 								offset = 0;
@@ -784,8 +785,8 @@ int AudioFDK::Update()
 					}
 
 					env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+					LOGAUDIO("offset (%d) + sizeof(tmpBuffer) (%d) > mBufferSizeinBytes (%d) -- Writing to java audio track and getting new java buffer.", offset, BUFFER_SIZE, mBufferSizeInBytes);
 					samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, offset  );
-
 				}
 				else
 				{
@@ -807,10 +808,10 @@ int AudioFDK::Update()
 			void* pBuffer = env->GetPrimitiveArrayCritical(buffer, NULL);
 			if (pBuffer)
 			{
-				LOGAUDIO("Writing zeros to the audio buffer");
 				memset(pBuffer, 0, mBufferSizeInBytes);
 				int len = mBufferSizeInBytes / 2;
 				env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+				LOGAUDIO("Writing zeros to the audio buffer - mTrack = %p", mTrack);
 				samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, mBufferSizeInBytes  );
 			}
 		}

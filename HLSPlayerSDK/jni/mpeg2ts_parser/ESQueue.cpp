@@ -436,7 +436,7 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnitAAC_23() {
             break;
         }
         size_t headerSize = protection_absent ? 7 : 9;
-        LOGAUDIO("adts header size = %d", headerSize);
+        LOGV2("adts header size = %d", headerSize);
         frameOffsets.push(offset + headerSize);
         frameSizes.push(aac_frame_length - headerSize);
         auSize += aac_frame_length - headerSize;
