@@ -355,7 +355,7 @@ bool HLSPlayer::EnsureJNI(JNIEnv** env)
 
 	if (mNextSegmentMethodID == NULL)
 	{
-		mNextSegmentMethodID = (*env)->GetStaticMethodID(mPlayerViewClass, "requestNextSegment", "()V" );
+		mNextSegmentMethodID = (*env)->GetStaticMethodID(mPlayerViewClass, "requestNextSegment", "()D" );
 		if ((*env)->ExceptionCheck())
 		{
 			mNextSegmentMethodID = NULL;
@@ -586,13 +586,21 @@ bool HLSPlayer::InitTracks()
 
 	LOGI("Creating internal MEPG2 TS media extractor");
 	mExtractor = new android::MPEG2TSExtractor(mDataSource);
-	LOGI("Saw %d tracks", mExtractor->countTracks());
-
 	if (mExtractor == NULL)
 	{
 		LOGE("Could not create MediaExtractor from DataSource @ %p", mDataSource.get());
 		return false;
 	}
+
+	int trackCount = mExtractor->countTracks();
+	if (trackCount == 0)
+	{
+		LOGI("We don't appear to have any tracks available. TrackCount = %d", trackCount);
+		return false;
+	}
+	LOGI("Saw %d tracks", trackCount);
+
+
 
 	LOGI("Getting bit rate of streams.");
 	int64_t totalBitRate = 0;
@@ -2090,6 +2098,39 @@ bool HLSPlayer::RenderBuffer(MediaBuffer* buffer)
 
 }
 
+const char* getStateString(int status)
+{
+	switch (status)
+	{
+	case STOPPED:
+		return "STOPPED";
+		break;
+	case PAUSED:
+		return "PAUSED";
+		break;
+	case PLAYING:
+		return "PLAYING";
+		break;
+	case SEEKING:
+		return "SEEKING";
+		break;
+	case FORMAT_CHANGING:
+		return "FORMAT_CHANGING";
+		break;
+	case FOUND_DISCONTINUITY:
+		return "FOUND_DISCONTINUITY";
+		break;
+	case WAITING_ON_DATA:
+		return "WAITING_ON_DATA";
+		break;
+	case CUE_STOP:
+		return "CUE_STOP";
+		break;
+
+	}
+	return "UNKNOWN";
+}
+
 void HLSPlayer::SetState(int status)
 {
 	LOGTRACE("%s", __func__);
@@ -2097,10 +2138,8 @@ void HLSPlayer::SetState(int status)
 
 	if (mStatus != status)
 	{
-		LOGI("State Changing");
-		LogState();
+		LOGI("State Changing from %s to %s", getStateString(mStatus), getStateString(status));
 		mStatus = status;
-		LogState();
 	}
 }
 
@@ -2114,48 +2153,31 @@ void HLSPlayer::LogState()
 		return;
 	lastLogged = mStatus;
 
-	switch (mStatus)
-	{
-	case STOPPED:
-		LOGI("State = STOPPED");
-		break;
-	case PAUSED:
-		LOGI("State = PAUSED");
-		break;
-	case PLAYING:
-		LOGI("State = PLAYING");
-		break;
-	case SEEKING:
-		LOGI("State = SEEKING");
-		break;
-	case FORMAT_CHANGING:
-		LOGI("State = FORMAT_CHANGING");
-		break;
-	case FOUND_DISCONTINUITY:
-		LOGI("State = FOUND_DISCONTINUITY");
-		break;
-	case WAITING_ON_DATA:
-		LOGI("State = WAITING_ON_DATA");
-		break;
-	case CUE_STOP:
-		LOGI("State = CUE_STOP");
-		break;
-
-	}
+	LOGI("State = %s", getStateString(mStatus));
 }
 
 #define MIN_NEXT_SEGMENT_REQUEST_DELAY 500
 uint32_t gLastRequestTime = 0;
 
-
-void HLSPlayer::RequestNextSegment()
+/*
+ * RequestNextSegment
+ *
+ * 	bool force - forces the request for a next segment to go through, even
+ * 				 if the wait delay has not expired, yet. This is used by
+ * 				 seek, where we need to make sure the request goes through
+ *
+ * 	returns the start time of the found segment. If there is no segment,
+ * 	returns -1.
+ *
+ */
+double HLSPlayer::RequestNextSegment(bool force)
 {
 
 	LOGTRACE("%s", __func__);
 
 	uint32_t curRequest = getTimeMS();
-	if (curRequest - MIN_NEXT_SEGMENT_REQUEST_DELAY < gLastRequestTime)
-		return;
+	if (curRequest - MIN_NEXT_SEGMENT_REQUEST_DELAY < gLastRequestTime && !force)
+		return 0.0f;
 
 	LOGI("Request Next Segment @ %d", curRequest);
 	gLastRequestTime = curRequest;
@@ -2166,13 +2188,15 @@ void HLSPlayer::RequestNextSegment()
 	LOGI("Requesting new segment");
 	JNIEnv* env = NULL;
 
-	if (!EnsureJNI(&env)) return;
+	if (!EnsureJNI(&env)) return 0.0f;
 
-	env->CallStaticVoidMethod(mPlayerViewClass, mNextSegmentMethodID);
+	double segTime = env->CallStaticDoubleMethod(mPlayerViewClass, mNextSegmentMethodID);
 	if (env->ExceptionCheck())
 	{
 		LOGI("Call to method  com/kaltura/hlsplayersdk/HLSPlayerViewController.requestNextSegment() FAILED" );
+		segTime = -1;
 	}
+	return segTime;
 }
 
 double HLSPlayer::RequestSegmentForTime(double time)
@@ -2258,7 +2282,7 @@ void HLSPlayer::Stop()
 	LOGTRACE("%s", __func__);
 	AutoLock locker(&lock, __func__);
 
-	LOGI("STOPPING!");
+	LOGI("STOPPING! - Already Stopped = %s", GetState() == STOPPED ? "True" : "False");
 	LogState();
 	if (GetState() != STOPPED)
 	{
@@ -2578,8 +2602,8 @@ void HLSPlayer::Seek(double time)
 	LOGI("newAudioTrack=%d", newAudioTrack);
 
 	LOGI("Requesting Next Segment");
-	RequestNextSegment();
-	LOGI("RequestNextSegment completed");
+	double isThereMore = RequestNextSegment(true);
+	LOGI("RequestNextSegment completed: isThereMore = %f", isThereMore);
 
 	mStartTimeMS = (mDataSource->getStartTime() * 1000);
 	LOGI("mStartTimeMS = %d", mStartTimeMS);
@@ -2596,6 +2620,11 @@ void HLSPlayer::Seek(double time)
 	if (!InitSources())
 	{
 		LOGE("InitSources failed!");
+		SetState(CUE_STOP);
+		mDataSource.clear();
+		mAlternateAudioDataSource.clear();
+		mDataSourceCache.clear();
+		LOGI("Data sources cleared");
 		return;
 	}
 
