@@ -2386,7 +2386,6 @@ namespace android_video_shim
                 {
                 	LOGW("NEGATIVE SIZE LEFT: sizeLeft=%d lastReadSize=%d source=%s", sizeLeft, lastReadSize, mSources[mSourceIdx]); // Something happened to the segment - maybe it's 404
 
-                	//assert (sizeLeft - lastReadSize >= 0);
                 	sizeLeft = 0;
                 	readSize = 0;
                 	break;

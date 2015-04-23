@@ -2159,7 +2159,17 @@ void HLSPlayer::LogState()
 #define MIN_NEXT_SEGMENT_REQUEST_DELAY 500
 uint32_t gLastRequestTime = 0;
 
-
+/*
+ * RequestNextSegment
+ *
+ * 	bool force - forces the request for a next segment to go through, even
+ * 				 if the wait delay has not expired, yet. This is used by
+ * 				 seek, where we need to make sure the request goes through
+ *
+ * 	returns the start time of the found segment. If there is no segment,
+ * 	returns -1.
+ *
+ */
 double HLSPlayer::RequestNextSegment(bool force)
 {
 
