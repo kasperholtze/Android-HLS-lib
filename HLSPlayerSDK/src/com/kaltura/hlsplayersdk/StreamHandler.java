@@ -1058,10 +1058,13 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 		if (baseManifest == null) return -1;
 
 		Vector<ManifestSegment> segments = getSegmentsForQuality( lastQuality );
-		updateSegmentTimes(segments);
-		int i = segments.size() - 1;
-
-		accum = (segments.get(i).startTime + segments.get(i).duration) - segments.get(0).startTime;
+		if (segments.size() > 0)
+		{
+			updateSegmentTimes(segments);
+			int i = segments.size() - 1;
+	
+			accum = (segments.get(i).startTime + segments.get(i).duration) - segments.get(0).startTime;
+		}
 
 		return (int) (accum * 1000);
 

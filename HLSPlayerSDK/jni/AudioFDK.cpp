@@ -415,6 +415,14 @@ void AudioFDK::Play()
 	samplesWritten = 0;
 }
 
+/*
+ * Stop
+ *
+ * Queue a stop request.
+ *
+ * 	seeking : true if you are stopping because of a seek, false, otherwise
+ *
+ */
 bool AudioFDK::Stop(bool seeking)
 {
 	LOGTRACE("%s", __func__);
@@ -443,7 +451,7 @@ bool AudioFDK::Stop(bool seeking)
 	}
 
 	// Now, we'll wait until the state is stopped (or is seeking, if we are seeking)
-	// TODO: THIS IS SUPER FRAGILE... If additional states are added to the queue, we might actually
+	// TODO: UPDATE THIS AS NECESSARY IF YOU ADD NEW STATES... If additional states are added to the queue, we might actually
 	// miss when this gets changed. For our purposes here, with stop being the only possible action
 	// at the moment, it will suffice, I think.
 	while ( mPlayState != SEEKING && mPlayState != STOPPED)
@@ -581,8 +589,12 @@ int AudioFDK::Update()
 	LOGTRACE("%s", __func__);
 	LOGTHREAD("Audio Update Thread Running - waiting = %s", mWaiting ? "true" : "false");
 
+	// Check to see if there is a target state on the queue.
 	if (targetStateCount() > 0)
 	{
+		// If there is at least one target state, handle that one state, and then return if it makes sense to do so,
+		// or allow it to run through the rest of the update, if that makes sense for the state.
+		// Additional items on the queue will be handled the next time through.
 		TargetState ts = popTargetState();
 		switch (ts.state)
 		{
@@ -845,7 +857,6 @@ int AudioFDK::Update()
 		// Create new one.
 		Start();
 
-		//pthread_mutex_unlock(&updateMutex);
 		Update();
 	}
 	else if (res == ERROR_END_OF_STREAM)
@@ -859,14 +870,12 @@ int AudioFDK::Update()
 				gHLSPlayerSDK->GetPlayer()->SetState(FOUND_DISCONTINUITY);
 			}
 		}
-		//pthread_mutex_unlock(&updateMutex);
 		return AUDIOTHREAD_WAIT;
 	}
 
 	if (mediaBuffer != NULL)
 		mediaBuffer->release();
 
-	//pthread_mutex_unlock(&updateMutex);
 	return AUDIOTHREAD_CONTINUE;
 }
 
@@ -916,6 +925,12 @@ AudioFDK::TargetState AudioFDK::popTargetState()
 	return rval;
 }
 
+/*
+ * doStop()
+ *
+ * Perform the actual stop
+ *
+ */
 bool AudioFDK::doStop(int data)
 {
 	LOGTRACE("%s", __func__);

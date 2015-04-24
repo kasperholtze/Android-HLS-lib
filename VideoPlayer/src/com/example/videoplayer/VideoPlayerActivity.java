@@ -161,7 +161,8 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 					int timeWindowStart = playerView.getPlaybackWindowStartTime();
 					playerView.setVisibility(View.VISIBLE);
 	    			playerView.seek(timeWindowStart + (progress * 1000));
-				}			}
+				}			
+			}
         });
         
         		

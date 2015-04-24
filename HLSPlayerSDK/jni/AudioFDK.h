@@ -50,17 +50,27 @@ public:
 private:
 
 	void SetState(int state, const char* func = "");
+
+
+	/*
+	 * TargetState, and it's associated methods (pushTargetSTate, targetStateCount, and popTargetState),
+	 * are used to queue up actions that will be handled in the Update method when the audio thread
+	 * makes the next call to it. This is used to synchronize these actions so that they don't interrupt
+	 * the decoding of frames and the interaction with the java audio track.
+	 *
+	 */
 	struct TargetState
 	{
-		int state;
-		int data;
+		int state; // The state you want to go to
+		int data; // Associated data (if you need to encode some flags or other information)
 	};
-
 	std::list<TargetState> mTargetStates;
 
-	void pushTargetState(int state, int data);
-	int targetStateCount();
-	TargetState popTargetState();
+	void pushTargetState(int state, int data); // Push a target state onto the state queue
+	int targetStateCount(); // Get the number of states on the queue
+	TargetState popTargetState(); // Retrieve the first state on the queue
+
+
 
 	bool doStop(int data);
 
