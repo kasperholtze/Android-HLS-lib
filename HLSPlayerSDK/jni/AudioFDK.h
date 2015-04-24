@@ -14,6 +14,7 @@
 #include <RefCounted.h>
 #include <AudioPlayer.h>
 #include <aacdecoder_lib.h>
+#include <list>
 
 class AudioFDK: public AudioPlayer {
 public:
@@ -47,6 +48,22 @@ public:
 
 	bool ReadUntilTime(double timeSecs);
 private:
+
+	void SetState(int state, const char* func = "");
+	struct TargetState
+	{
+		int state;
+		int data;
+	};
+
+	std::list<TargetState> mTargetStates;
+
+	void pushTargetState(int state, int data);
+	int targetStateCount();
+	TargetState popTargetState();
+
+	bool doStop(int data);
+
 	void SetTimeStampOffset(double offsetSecs);
 
 	bool InitJavaTrack();
@@ -95,6 +112,7 @@ private:
 	sem_t semPause;
 	pthread_mutex_t updateMutex;
 	pthread_mutex_t lock;
+	pthread_mutex_t stateQueueLock;
 
 };
 

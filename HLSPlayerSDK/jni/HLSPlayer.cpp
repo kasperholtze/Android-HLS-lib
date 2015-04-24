@@ -2098,38 +2098,7 @@ bool HLSPlayer::RenderBuffer(MediaBuffer* buffer)
 
 }
 
-const char* getStateString(int status)
-{
-	switch (status)
-	{
-	case STOPPED:
-		return "STOPPED";
-		break;
-	case PAUSED:
-		return "PAUSED";
-		break;
-	case PLAYING:
-		return "PLAYING";
-		break;
-	case SEEKING:
-		return "SEEKING";
-		break;
-	case FORMAT_CHANGING:
-		return "FORMAT_CHANGING";
-		break;
-	case FOUND_DISCONTINUITY:
-		return "FOUND_DISCONTINUITY";
-		break;
-	case WAITING_ON_DATA:
-		return "WAITING_ON_DATA";
-		break;
-	case CUE_STOP:
-		return "CUE_STOP";
-		break;
 
-	}
-	return "UNKNOWN";
-}
 
 void HLSPlayer::SetState(int status)
 {
@@ -2254,14 +2223,14 @@ void HLSPlayer::NoteHWRendererMode(bool enabled, int w, int h, int colf)
 int HLSPlayer::GetState()
 {
 	//LOGTRACE("%s", __func__);
-	AutoLock locker(&lock, __func__);
+	//AutoLock locker(&lock, __func__);
 	return mStatus;
 }
 
 void HLSPlayer::Pause(bool pause)
 {
 	LOGTRACE("%s", __func__);
-	AutoLock locker(&lock);
+	AutoLock locker(&lock, __func__);
 
 	LogState();
 	if (pause && GetState() == PLAYING)

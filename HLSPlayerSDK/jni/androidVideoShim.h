@@ -30,13 +30,13 @@ public:
     AutoLock(pthread_mutex_t * lock, const char* path="")
     : lock(lock), mPath(path)
     {
-        LOGTHREAD("Locking mutex %p, %s", lock, path);
+        LOGTHREAD("Locking mutex %p, %d, %s", lock, lock->value, path);
         pthread_mutex_lock(lock);
     }
 
     ~AutoLock()
     {
-        LOGTHREAD("Unlocking mutex %p, %s", lock, mPath);
+        LOGTHREAD("Unlocking mutex %p, %d,  %s", lock, lock->value, mPath);
         pthread_mutex_unlock(lock);
     }
 

@@ -984,14 +984,27 @@ public class HLSPlayerViewController extends RelativeLayout implements
 				boolean tss = targetSeekSet;
 				int tsms = targetSeekMS;
 				int state = GetState();
+				
+				int startTime = getPlaybackWindowStartTime();
+				int duration = getDuration();
 
+				if (mStreamHandler != null && mStreamHandler.streamEnds() && 
+						tsms > (startTime + duration - 2000) )
+				{
+					tsms = getPlaybackWindowStartTime() + getDuration() - 2000;
+				}
+				
+				
 				if (tss && state != STATE_STOPPED)
 				{
 					if (notify) postPlayerStateChange(PlayerStates.SEEKING);
 					targetSeekSet = false;
 					targetSeekMS = 0;
 					if (tsms != StreamHandler.USE_DEFAULT_START)
+					{
+						
 						SeekTo(((double)tsms) / 1000.0f);
+					}
 					else
 						SeekTo((double)tsms);
 					if (notify) postPlayerStateChange(PlayerStates.SEEKED);

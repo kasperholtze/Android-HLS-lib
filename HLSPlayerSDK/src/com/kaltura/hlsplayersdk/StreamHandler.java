@@ -1061,7 +1061,7 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 		updateSegmentTimes(segments);
 		int i = segments.size() - 1;
 
-		accum = (segments.get(i).startTime + segments.get(i).duration) - lastKnownPlaylistStartTime;
+		accum = (segments.get(i).startTime + segments.get(i).duration) - segments.get(0).startTime;
 
 		return (int) (accum * 1000);
 

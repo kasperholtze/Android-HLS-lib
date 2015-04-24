@@ -52,5 +52,7 @@ enum Playstate
 	CUE_STOP
 };
 
+const char* getStateString(int playState);
+
 
 #endif /* CONSTANTS_H_ */
