@@ -156,9 +156,12 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 			@Override
 			public void onStopTrackingTouch(SeekBar seekBar)
 			{
-				int timeWindowStart = playerView.getPlaybackWindowStartTime();
-				playerView.setVisibility(View.VISIBLE);
-    			playerView.seek(timeWindowStart + (progress * 1000));
+				if (playerView != null)
+				{
+					int timeWindowStart = playerView.getPlaybackWindowStartTime();
+					playerView.setVisibility(View.VISIBLE);
+	    			playerView.seek(timeWindowStart + (progress * 1000));
+				}			
 			}
         });
         
@@ -636,7 +639,14 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	@Override
 	public void onPlayheadUpdated(int msec) {
 		mLastTimeMS = msec;
-		timeStampText = "Time: " + msec + "\n";
+    	int duration = 0;
+    	int startTime = 0;
+    	if (playerView != null)
+    		{
+    			duration = playerView.getDuration();
+    			startTime = playerView.getPlaybackWindowStartTime();
+    		}
+		timeStampText = "Time: " + msec + " Duration: " + duration + " Start: " + startTime + "\n";
 		//Log.i("OnPlayheadUpdated", "Time = " + msec);
 
 		if (playerView != null) seekBar.setProgress((msec - playerView.getPlaybackWindowStartTime()) / 1000);
@@ -686,7 +696,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	public void onDurationChanged(int msec)
 	{
 		Log.i("VideoPlayerActivity.onDurationChanged", "Duration = " + msec);
-		if (playerView != null)  timeWindowDuration = ((msec - playerView.getPlaybackWindowStartTime()) / 1000);
+		timeWindowDuration = msec / 1000;
 		seekBar.setMax(timeWindowDuration);
 	}
 
