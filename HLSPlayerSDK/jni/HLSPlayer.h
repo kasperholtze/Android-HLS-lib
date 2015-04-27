@@ -87,7 +87,7 @@ private:
 
 	bool InitTracks();
 
-	void RequestNextSegment();
+	double RequestNextSegment(bool force = false);
 
 	double RequestSegmentForTime(double time);
 	void NoteVideoDimensions();

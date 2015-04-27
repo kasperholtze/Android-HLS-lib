@@ -1,6 +1,9 @@
 package com.example.videoplayer;
 
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.Vector;
 
 import android.app.AlertDialog;
 import android.app.Activity;
@@ -16,10 +19,13 @@ import android.view.MenuItem;
 import android.view.SubMenu;
 import android.view.View;
 import android.widget.EditText;
+import android.widget.SeekBar;
+import android.widget.SeekBar.OnSeekBarChangeListener;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import com.kaltura.hlsplayersdk.HLSPlayerViewController;
+import com.kaltura.hlsplayersdk.URLLoader;
 import com.kaltura.hlsplayersdk.types.PlayerStates;
 import com.kaltura.hlsplayersdk.QualityTrack;
 import com.kaltura.hlsplayersdk.cache.HLSSegmentCache;
@@ -46,6 +52,13 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 
 	private Thread mSoakThread = null;
 	private Runnable soakRunnable = new SoakerRunnable(this);
+	
+	private Timer debugTimer = null;
+	private final boolean debugAutostartVideo = false;
+	
+	private SeekBar seekBar;
+	
+	private int timeWindowDuration = 0;
 
     @SuppressWarnings("unused")
 	@Override
@@ -71,6 +84,10 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
         }
 
         initPlayerView();
+        
+        initSeekBar();
+        
+        
 
         if(false)
         {
@@ -88,6 +105,67 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
         		}
             } */
         }
+        
+        if (debugAutostartVideo)
+        {
+        	final VideoPlayerActivity vpa = this;
+	        debugTimer = new Timer();
+	        debugTimer.schedule(new TimerTask()
+			{
+	        	
+				public void run()
+				{
+					vpa.runOnUiThread(new Runnable() 
+						{
+						public void run() {
+				        	setVideoUrl("http://www.kaltura.com/p/0/playManifest/entryId/1_0i2t7w0i/format/applehttp");
+						}
+						
+						});
+				}
+				
+			}, 5000);
+        }
+        
+    }
+    
+    private void initSeekBar()
+    {
+        seekBar = (SeekBar) findViewById(R.id.seek_bar);
+        
+        seekBar.setOnSeekBarChangeListener( new OnSeekBarChangeListener() 
+        {
+        	int progress = 0;
+        	
+        	@Override
+        	public void onProgressChanged(SeekBar seekBar, int progressValue, boolean fromUser)
+        	{
+        		if (fromUser)
+        		{
+        			progress = progressValue;
+        		}
+        	}
+
+			@Override
+			public void onStartTrackingTouch(SeekBar seekBar)
+			{
+				// TODO Auto-generated method stub
+				
+			}
+
+			@Override
+			public void onStopTrackingTouch(SeekBar seekBar)
+			{
+				if (playerView != null)
+				{
+					int timeWindowStart = playerView.getPlaybackWindowStartTime();
+					playerView.setVisibility(View.VISIBLE);
+	    			playerView.seek(timeWindowStart + (progress * 1000));
+				}			
+			}
+        });
+        
+        		
     }
 
     private void initPlayerView()
@@ -175,6 +253,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
     public static final int MENU_AD_STITCHING = MENU_START + 5;
     public static final int MENU_NASA = MENU_START + 6;
     public static final int MENU_SHORT = MENU_START + 7;
+    public static final int MENU_BITGRAVITY = MENU_START + 8;
     
     
     @Override
@@ -194,6 +273,8 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
     			subMenu.add(0, MENU_AD_STITCHING, Menu.NONE, "Ad Stitching");
     			subMenu.add(0, MENU_NASA, Menu.NONE, "Nasa");
     			subMenu.add(0, MENU_SHORT, Menu.NONE, "Short");
+    			subMenu.add(0, MENU_BITGRAVITY, Menu.NONE, "BitGravity");
+    			
     			menuPrepared = true;
     		}
     	}
@@ -212,6 +293,14 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
         	lastUrl = "http://www.kaltura.com/p/0/playManifest/entryId/1_0i2t7w0i/format/applehttp";
             setVideoUrl(lastUrl);
         	return true;
+        }
+        else if (id == MENU_BITGRAVITY)
+        {
+        	setTitle(item.getTitle());
+        	lastUrl = "http://bitgravity.bc-s.cdn.bitgravity.com/cdn/_definst_/bitgravity/diggreel--0196--bigfoot--large.h264.mp4/playlist.m3u8";
+            setVideoUrl(lastUrl);
+        	return true;
+        	
         }
         else if (id == MENU_AD_TV_GRAB)
         {
@@ -550,9 +639,17 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	@Override
 	public void onPlayheadUpdated(int msec) {
 		mLastTimeMS = msec;
-		timeStampText = "Time: " + msec + "\n";
+    	int duration = 0;
+    	int startTime = 0;
+    	if (playerView != null)
+    		{
+    			duration = playerView.getDuration();
+    			startTime = playerView.getPlaybackWindowStartTime();
+    		}
+		timeStampText = "Time: " + msec + " Duration: " + duration + " Start: " + startTime + "\n";
 		//Log.i("OnPlayheadUpdated", "Time = " + msec);
-	
+
+		if (playerView != null) seekBar.setProgress((msec - playerView.getPlaybackWindowStartTime()) / 1000);
 		updateDebugText();
 	}
 
@@ -561,8 +658,14 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 		Log.i("VideoPlayer.onStateChanged", "Player State changed to " + state.toString());
 
 
-		if (state == PlayerStates.END)
-			playerView.setVisibility(View.INVISIBLE);
+		if (playerView != null)
+		{
+			if (state == PlayerStates.END)
+				playerView.setVisibility(View.INVISIBLE);
+			if (state == PlayerStates.PLAY || state == PlayerStates.SEEKED)
+				playerView.setVisibility(View.VISIBLE);
+		}
+			
 
 		return true;
 	}
@@ -573,8 +676,6 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 		++progressCount;
 		progressText = "Progress: " + progress + "(" + progressCount + ")" + "%\n";
 		updateDebugText();
-
-
 	}
 
 	@Override
@@ -595,6 +696,8 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	public void onDurationChanged(int msec)
 	{
 		Log.i("VideoPlayerActivity.onDurationChanged", "Duration = " + msec);
+		timeWindowDuration = msec / 1000;
+		seekBar.setMax(timeWindowDuration);
 	}
 
 }

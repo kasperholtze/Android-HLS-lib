@@ -5,6 +5,7 @@
  *      Author: Mark
  */
 
+
 #include <androidVideoShim.h>
 #include <RefCounted.h>
 
@@ -23,13 +24,13 @@ RefCounted::~RefCounted() {
 
 int RefCounted::addRef()
 {
-	AutoLock locker(&lock);
+	AutoLock locker(&lock, __func__);
 	return (++mRefCount);
 }
 
 int RefCounted::release()
 {
-	AutoLock locker(&lock);
+	AutoLock locker(&lock, __func__);
 	int refCount = (--mRefCount);
 	if (mRefCount == 0)
 	{

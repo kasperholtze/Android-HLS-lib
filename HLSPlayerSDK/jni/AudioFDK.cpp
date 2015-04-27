@@ -38,9 +38,12 @@ AudioFDK::AudioFDK(JavaVM* jvm) : mJvm(jvm), mAudioTrack(NULL), mGetMinBufferSiz
 		LOGE("Java VM is NULL");
 	}
 
-	int err = pthread_mutex_init(&updateMutex, NULL);
-	LOGI(" AudioTrack mutex err = %d", err);
+	int err = initRecursivePthreadMutex(&updateMutex);
+	LOGI(" AudioTrack updateMutex err = %d", err);
 	err = initRecursivePthreadMutex(&lock);
+	LOGI(" AudioTrack lock mutex err = %d", err);
+	err = initRecursivePthreadMutex(&stateQueueLock);
+	LOGI(" AudioTrack stateQueueLock mutex err = %d", err);
 }
 
 AudioFDK::~AudioFDK()
@@ -296,7 +299,7 @@ bool AudioFDK::Start()
 
 	int lastPlayState = mPlayState;
 
-	mPlayState = PLAYING;
+	SetState(PLAYING, __func__);
 
 	if (lastPlayState == PAUSED || lastPlayState == SEEKING || lastPlayState == INITIALIZED)
 	{
@@ -391,7 +394,7 @@ void AudioFDK::Play()
 	if (mPlayState == PLAYING) return;
 	int lastPlayState = mPlayState;
 
-	mPlayState = PLAYING;
+	SetState(PLAYING, __func__);
 
 	if (lastPlayState == PAUSED || lastPlayState == SEEKING || lastPlayState == INITIALIZED)
 	{
@@ -412,18 +415,30 @@ void AudioFDK::Play()
 	samplesWritten = 0;
 }
 
+/*
+ * Stop
+ *
+ * Queue a stop request.
+ *
+ * 	seeking : true if you are stopping because of a seek, false, otherwise
+ *
+ */
 bool AudioFDK::Stop(bool seeking)
 {
 	LOGTRACE("%s", __func__);
 	if (mPlayState == STOPPED && seeking == false) return true;
+	if (mPlayState == STOPPED && seeking == true)
+	{
+		//mPlayState == SEEKING;
+		return true;
+	}
 
 	int lastPlayState = mPlayState;
 
-	if (seeking)
-		mPlayState = SEEKING;
-	else
-		mPlayState = STOPPED;
+	// push the target state on to the queue
+	pushTargetState(STOPPED, seeking ? 1 : 0 );
 
+	// Release the thread to continue if we're puased or seeking
 	if (lastPlayState == PAUSED)
 	{
 		LOGI("Stopping Audio Thread: state = PAUSED | semPause.count = %d", semPause.count );
@@ -435,36 +450,18 @@ bool AudioFDK::Stop(bool seeking)
 		sem_post(&semPause);
 	}
 
-
-	JNIEnv* env;
-	if (!gHLSPlayerSDK->GetEnv(&env))
+	// Now, we'll wait until the state is stopped (or is seeking, if we are seeking)
+	// TODO: UPDATE THIS AS NECESSARY IF YOU ADD NEW STATES... If additional states are added to the queue, we might actually
+	// miss when this gets changed. For our purposes here, with stop being the only possible action
+	// at the moment, it will suffice, I think.
+	while ( mPlayState != SEEKING && mPlayState != STOPPED)
 	{
-		LOGE("Could not get Java Environment in order to stop the track");
-		return false;
+		LOGI("Waiting for state - curState=%s", getStateString(mPlayState));
+		sched_yield();
 	}
 
-	AutoLock locker(&lock, __func__);
-	pthread_mutex_lock(&updateMutex);
+	LOGI("Done Waiting. curState=%s", getStateString(mPlayState));
 
-	if (mTrack == NULL)
-	{
-			pthread_mutex_unlock(&updateMutex);
-			return true; // We're already stopped since we don't have a track
-	}
-
-	env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mStop);
-
-	if(seeking)
-	{
-		if (mAACDecoder) aacDecoder_Close(mAACDecoder);
-		mAACDecoder = NULL;
-		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mRelease);
-		env->DeleteGlobalRef(mTrack);
-		mTrack = NULL;
-	}
-
-
-	pthread_mutex_unlock(&updateMutex);
 
 	return true;
 }
@@ -473,7 +470,8 @@ void AudioFDK::Pause()
 {
 	LOGTRACE("%s", __func__);
 	if (mPlayState == PAUSED) return;
-	mPlayState = PAUSED;
+
+	pushTargetState(PAUSED, 0);
 
 }
 
@@ -486,9 +484,8 @@ void AudioFDK::Flush()
 	if (gHLSPlayerSDK->GetEnv(&env))
 		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mFlush);
 
-	pthread_mutex_lock(&updateMutex);
+	AutoLock updateLocker(&updateMutex, __func__);
 	samplesWritten = 0;
-	pthread_mutex_unlock(&updateMutex);
 
 }
 
@@ -590,7 +587,36 @@ bool AudioFDK::ReadUntilTime(double timeSecs)
 int AudioFDK::Update()
 {
 	LOGTRACE("%s", __func__);
-	LOGTHREAD("Audio Update Thread Running");
+	LOGTHREAD("Audio Update Thread Running - waiting = %s", mWaiting ? "true" : "false");
+
+	// Check to see if there is a target state on the queue.
+	if (targetStateCount() > 0)
+	{
+		// If there is at least one target state, handle that one state, and then return if it makes sense to do so,
+		// or allow it to run through the rest of the update, if that makes sense for the state.
+		// Additional items on the queue will be handled the next time through.
+		TargetState ts = popTargetState();
+		switch (ts.state)
+		{
+		case STOPPED:
+			if (doStop(ts.data))
+			{
+				LOGI("Stopped: state=%s", getStateString(mPlayState));
+				return AUDIOTHREAD_CONTINUE;
+			}
+			break;
+		case PAUSED:
+			{
+				// Pause the java track here so that we aren't in the middle of feeding it data when we pause.
+				JNIEnv* env;
+				if (gHLSPlayerSDK->GetEnv(&env))
+					env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mPause);
+				SetState(PAUSED, __func__);
+			}
+			break;
+		}
+	}
+
 	if (mWaiting) return AUDIOTHREAD_WAIT;
 	if (mPlayState != PLAYING)
 	{
@@ -598,24 +624,24 @@ int AudioFDK::Update()
 		{
 			LOGI("Audio Thread initialized. Waiting to start | semPause.count = %d", semPause.count);
 			sem_wait(&semPause);
+			return AUDIOTHREAD_CONTINUE; // Make sure we check the state queue, before continuing
 		}
 
-		while (mPlayState == PAUSED)
+		if (mPlayState == PAUSED)
 		{
 			LOGI("Pausing Audio Thread: state = PAUSED | semPause.count = %d", semPause.count );
 
-			// Pause the java track here so that we aren't in the middle of feeding it data when we pause.
-			JNIEnv* env;
-			if (gHLSPlayerSDK->GetEnv(&env))
-				env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mPause);
+
 			sem_wait(&semPause);
+			return AUDIOTHREAD_CONTINUE; // Make sure we check the state queue, before continuing
 		}
 
-		while (mPlayState == SEEKING)
+		if (mPlayState == SEEKING)
 		{
 			LOGI("Pausing Audio Thread: state = SEEKING | semPause.count = %d", semPause.count );
 			sem_wait(&semPause);
 			LOGI("Resuming Audio Thread: state = %d | semPause.count = %d", mPlayState, semPause.count );
+			return AUDIOTHREAD_CONTINUE; // Make sure we check the state queue, before continuing
 		}
 
 		if (mPlayState == STOPPED)
@@ -628,12 +654,14 @@ int AudioFDK::Update()
 	}
 
 
+
+
 	JNIEnv* env;
 	if (!gHLSPlayerSDK->GetEnv(&env))
 		return AUDIOTHREAD_FINISH; // If we don't have a java environment at this point, something has killed it,
 	// so we better kill the thread.
 
-	pthread_mutex_lock(&updateMutex);
+	AutoLock updateLocker(&updateMutex, __func__);
 
 	MediaBuffer* mediaBuffer = NULL;
 
@@ -649,7 +677,7 @@ int AudioFDK::Update()
 		res = OK;
 	}
 
-	if (res == OK)
+	if (res == OK && mTrack)
 	{
 		//LOGI("Finished reading from the media buffer");
 		RUNDEBUG( {if (mediaBuffer) mediaBuffer->meta_data()->dumpToLog();} );
@@ -768,10 +796,11 @@ int AudioFDK::Update()
 
 							if (offset + copySize > mBufferSizeInBytes)
 							{
-								LOGAUDIO("offset (%d) + sizeof(tmpBuffer) (%d) > mBufferSizeinBytes (%d) -- Writing to java audio track and getting new java buffer.", offset, BUFFER_SIZE, mBufferSizeInBytes);
 								// We need to empty our buffer and make a new one!!!
 								env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+								LOGAUDIO("offset (%d) + sizeof(tmpBuffer) (%d) > mBufferSizeinBytes (%d) -- Writing to java audio track and getting new java buffer.", offset, BUFFER_SIZE, mBufferSizeInBytes);
 								samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, offset  );
+
 
 								pBuffer = env->GetPrimitiveArrayCritical(buffer, NULL);
 								offset = 0;
@@ -784,8 +813,8 @@ int AudioFDK::Update()
 					}
 
 					env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+					LOGAUDIO("offset (%d) + sizeof(tmpBuffer) (%d) > mBufferSizeinBytes (%d) -- Writing to java audio track and getting new java buffer.", offset, BUFFER_SIZE, mBufferSizeInBytes);
 					samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, offset  );
-
 				}
 				else
 				{
@@ -807,10 +836,10 @@ int AudioFDK::Update()
 			void* pBuffer = env->GetPrimitiveArrayCritical(buffer, NULL);
 			if (pBuffer)
 			{
-				LOGAUDIO("Writing zeros to the audio buffer");
 				memset(pBuffer, 0, mBufferSizeInBytes);
 				int len = mBufferSizeInBytes / 2;
 				env->ReleasePrimitiveArrayCritical(buffer, pBuffer, 0);
+				LOGAUDIO("Writing zeros to the audio buffer - mTrack = %p", mTrack);
 				samplesWritten += env->CallNonvirtualIntMethod(mTrack, mCAudioTrack, mWrite, buffer, 0, mBufferSizeInBytes  );
 			}
 		}
@@ -828,7 +857,6 @@ int AudioFDK::Update()
 		// Create new one.
 		Start();
 
-		pthread_mutex_unlock(&updateMutex);
 		Update();
 	}
 	else if (res == ERROR_END_OF_STREAM)
@@ -842,14 +870,12 @@ int AudioFDK::Update()
 				gHLSPlayerSDK->GetPlayer()->SetState(FOUND_DISCONTINUITY);
 			}
 		}
-		pthread_mutex_unlock(&updateMutex);
 		return AUDIOTHREAD_WAIT;
 	}
 
 	if (mediaBuffer != NULL)
 		mediaBuffer->release();
 
-	pthread_mutex_unlock(&updateMutex);
 	return AUDIOTHREAD_CONTINUE;
 }
 
@@ -873,3 +899,81 @@ int AudioFDK::getBufferSize()
 	return (samplesWritten / 2) - frames;
 }
 
+void AudioFDK::pushTargetState(int state, int data)
+{
+	AutoLock(&stateQueueLock, __func__);
+	LOGI("Pushing target state %s", getStateString(state));
+	mTargetStates.push_back(TargetState { state, data } );
+}
+
+int AudioFDK::targetStateCount()
+{
+	AutoLock(&stateQueueLock, __func__);
+	return mTargetStates.size();
+}
+
+AudioFDK::TargetState AudioFDK::popTargetState()
+{
+	AutoLock(&stateQueueLock, __func__);
+	TargetState rval = { -1 , 0 };
+	if (mTargetStates.size() > 0)
+	{
+		rval = mTargetStates.front();
+		mTargetStates.pop_front();
+	}
+	LOGI("Popped target state %s", getStateString(rval.state));
+	return rval;
+}
+
+/*
+ * doStop()
+ *
+ * Perform the actual stop
+ *
+ */
+bool AudioFDK::doStop(int data)
+{
+	LOGTRACE("%s", __func__);
+	bool seeking = (data == 1);
+
+	JNIEnv* env;
+	if (!gHLSPlayerSDK->GetEnv(&env))
+	{
+		LOGE("Could not get Java Environment in order to stop the track");
+		SetState(STOPPED, __func__);
+		return false;
+	}
+
+	AutoLock locker(&lock, __func__);
+	AutoLock updateLocker(&updateMutex, __func__);
+
+	if (mTrack != NULL)
+	{
+
+		env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mStop);
+
+		if(seeking)
+		{
+			if (mAACDecoder) aacDecoder_Close(mAACDecoder);
+			mAACDecoder = NULL;
+			env->CallNonvirtualVoidMethod(mTrack, mCAudioTrack, mRelease);
+			env->DeleteGlobalRef(mTrack);
+			mTrack = NULL;
+		}
+
+	}
+	LOGAUDIO("Stop completed");
+	if (seeking)
+		SetState(SEEKING, __func__);
+	else
+		SetState(STOPPED, __func__);
+
+	return true;
+}
+
+
+void AudioFDK::SetState(int state, const char* func)
+{
+	LOGI("Changing AudioFDK state from %s to %s in %s", getStateString(mPlayState), getStateString(state), func);
+	mPlayState = state;
+}

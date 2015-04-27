@@ -30,13 +30,13 @@ public:
     AutoLock(pthread_mutex_t * lock, const char* path="")
     : lock(lock), mPath(path)
     {
-        LOGTHREAD("Locking mutex %p, %s", lock, path);
+        LOGTHREAD("Locking mutex %p, %d, %s", lock, lock->value, path);
         pthread_mutex_lock(lock);
     }
 
     ~AutoLock()
     {
-        LOGTHREAD("Unlocking mutex %p, %s", lock, mPath);
+        LOGTHREAD("Unlocking mutex %p, %d,  %s", lock, lock->value, mPath);
         pthread_mutex_unlock(lock);
     }
 
@@ -2385,7 +2385,10 @@ namespace android_video_shim
                 if (sizeLeft - lastReadSize < 0)
                 {
                 	LOGW("NEGATIVE SIZE LEFT: sizeLeft=%d lastReadSize=%d source=%s", sizeLeft, lastReadSize, mSources[mSourceIdx]); // Something happened to the segment - maybe it's 404
-                	assert (sizeLeft - lastReadSize >= 0);
+
+                	sizeLeft = 0;
+                	readSize = 0;
+                	break;
                 }
 
 

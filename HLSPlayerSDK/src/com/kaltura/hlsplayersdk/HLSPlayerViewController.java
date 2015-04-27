@@ -53,6 +53,11 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		VideoPlayerInterface, URLLoader.DownloadEventListener, OnParseCompleteListener, 
 		TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, SegmentCachedListener, KnowledgePrepHandler {
 
+	// Debug hacks!!!
+	private final boolean playKalturaVODonResume = false;
+	// No More Debug Hacks!!!
+	
+	
 	// State constants.
 	private final int STATE_STOPPED = 1;
 	private final int STATE_PAUSED = 2;
@@ -62,6 +67,44 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	private final int STATE_FOUND_DISCONTINUITY = 6;
 	private final int STATE_WAITING_FOR_DATA = 7;
 	private final int STATE_CUE_STOP = 8;
+	
+	private String getStateString(int state)
+	{
+		String ss = "STATE_UNKNOWN";
+		switch (state)
+		{
+		case STATE_STOPPED:
+			ss = "STATE_STOPPED";
+			break;
+		case STATE_PAUSED:
+			ss="STATE_PAUSED";
+			break;
+		case STATE_PLAYING:
+			ss="STATE_PLAYING";
+			break;
+
+		case STATE_SEEKING:
+			ss="STATE_SEEKING";
+			break;
+
+		case STATE_FORMAT_CHANGING:
+			ss="STATE_FORMAT_CHANGING";
+			break;
+
+		case STATE_FOUND_DISCONTINUITY:
+			ss="STATE_FOUND_DISCONTINUITY";
+			break;
+
+		case STATE_WAITING_FOR_DATA:
+			ss="STATE_WAITING_FOR_DATA";
+			break;
+
+		case STATE_CUE_STOP:
+			ss="STATE_CUE_STOP";
+			break;
+		}
+		return ss;
+	}
 
 	private final int THREAD_STATE_STOPPED = 0;
 	private final int THREAD_STATE_RUNNING = 1;
@@ -109,9 +152,9 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	/**
 	 * Get the next segment in the stream.
 	 */
-	private static void requestNextSegment() {
+	private static double requestNextSegment() {
 		if (currentController == null)
-			return;
+			return -1;
 
 		ManifestSegment seg = currentController.getStreamHandler().getNextFile(mQualityLevel);
 		if(seg == null)
@@ -119,7 +162,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			if (currentController.getStreamHandler().streamEnds() == true)
 				noMoreSegments = true;
 			Log.i("HLSPlayerViewController.requestNextSegment", "---- Did not receive a valid segment ----- ");
-			return;
+			return -1;
 		}
 
 		Log.i("HLSPlayerViewController.requestNextSegment", "---- Feeding segment '" + seg.uri + "'");
@@ -134,6 +177,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		{
 			currentController.FeedSegment(seg.uri, seg.quality, seg.continuityEra, null, -1, seg.startTime, seg.cryptoId, -1);
 		}
+		return seg.startTime;
 	}
 
 	/**
@@ -468,6 +512,16 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			setStartupState(STARTUP_STATE_WAITING_TO_START);
 			mRestoringState = true;
 		}
+		
+		
+		// DEBUG HACK!
+		if (playKalturaVODonResume)
+		{
+			mLastUrl = "http://www.kaltura.com/p/0/playManifest/entryId/1_0i2t7w0i/format/applehttp";
+			setStartupState(STARTUP_STATE_WAITING_TO_START);
+			mRestoringState = true;
+		}
+		// END DEBUG HACK!
 
 		if (mRestoringState)
 		{
@@ -479,11 +533,14 @@ public class HLSPlayerViewController extends RelativeLayout implements
 
 					Log.i("VideoPlayer UI", " -----> Play " + mLastUrl);
 		            setVideoUrl(mLastUrl);
-		        	setVisibility(View.VISIBLE);
-		        	play();
+		            if (mInitialPlayState == STATE_PLAYING)
+		            	play();
 				}
 			});
 			t.start();
+        	if (mInitialPlayState == STATE_PLAYING)
+        		setVisibility(View.VISIBLE);
+
 		}
 	}
 
@@ -769,6 +826,13 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			return mStreamHandler.getDuration();
 		return -1;
 	}
+	
+	public int getPlaybackWindowStartTime()
+	{
+		if (mStreamHandler != null)
+			return mStreamHandler.getTimeWindowStart();
+		return 0;
+	}
 
 	public String getVideoUrl() {
 		return "Not Implemented";
@@ -781,11 +845,18 @@ public class HLSPlayerViewController extends RelativeLayout implements
             Log.i("HLSPlayerViewController.initiatePlay", "null stream handler, aborting.");
             return;
         }
+        
+        int actualStartTimeMS = mStartingMS;
+        if (mUseSeekToMS)
+        {
+        	actualStartTimeMS = mSeekToMS;
+        	mUseSeekToMS = false;
+        }
 
 		setStartupState(STARTUP_STATE_STARTED);
 		mStreamHandler.initialize(mSubtitleHandler);
-		PlayFile(((double)mStartingMS) / 1000.0f);
-    	if (mStartingMS != 0) seek(mStartingMS, false);
+		PlayFile((((double)actualStartTimeMS) / 1000.0f));
+    	if (actualStartTimeMS != 0) seek(actualStartTimeMS, false);
 		postPlayerStateChange(PlayerStates.PLAY);
 
 		if (mRestoringState)
@@ -842,19 +913,23 @@ public class HLSPlayerViewController extends RelativeLayout implements
         });
 	}
 
+	private void internalStop()
+	{
+        HLSSegmentCache.cancelDownloads();
+        if (mStreamHandler != null) mStreamHandler.stopReloads();
+        StopPlayer();
+        try {
+            Thread.sleep(100);
+        } catch (InterruptedException e) {
+            // TODO Auto-generated catch block
+        }
+        postPlayerStateChange(PlayerStates.END);
+	}
+	
 	public void stop() {
         postToInterfaceThread(new Runnable() {
             public void run() {
-                HLSSegmentCache.cancelDownloads();
-                if (mStreamHandler != null) mStreamHandler.stopReloads();
-                StopPlayer();
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
-                }
-                postPlayerStateChange(PlayerStates.END);
+            	internalStop();
             }
         });
 	}
@@ -909,14 +984,27 @@ public class HLSPlayerViewController extends RelativeLayout implements
 				boolean tss = targetSeekSet;
 				int tsms = targetSeekMS;
 				int state = GetState();
+				
+				int startTime = getPlaybackWindowStartTime();
+				int duration = getDuration();
 
+				if (mStreamHandler != null && mStreamHandler.streamEnds() && 
+						tsms > (startTime + duration - 2000) )
+				{
+					tsms = getPlaybackWindowStartTime() + getDuration() - 2000;
+				}
+				
+				
 				if (tss && state != STATE_STOPPED)
 				{
 					if (notify) postPlayerStateChange(PlayerStates.SEEKING);
 					targetSeekSet = false;
 					targetSeekMS = 0;
 					if (tsms != StreamHandler.USE_DEFAULT_START)
+					{
+						
 						SeekTo(((double)tsms) / 1000.0f);
+					}
 					else
 						SeekTo((double)tsms);
 					if (notify) postPlayerStateChange(PlayerStates.SEEKED);
@@ -924,16 +1012,10 @@ public class HLSPlayerViewController extends RelativeLayout implements
 				else if (tss && state == STATE_STOPPED && mRenderThreadState == THREAD_STATE_RUNNING)
 				{
 					Log.i("PlayerViewController.Seek().Runnable()", "Seeking while player is stopped.");
-					mStreamHandler.initialize(mSubtitleHandler); // Need to restart the reload manifest process
-					if (notify) postPlayerStateChange(PlayerStates.SEEKING);
-					targetSeekSet = false;
-					targetSeekMS = 0;
-
-					if (tsms != StreamHandler.USE_DEFAULT_START)
-						SeekTo(((double)tsms) / 1000.0f);
-					else
-						SeekTo((double)tsms);
-					if (notify) postPlayerStateChange(PlayerStates.SEEKED);
+					
+					setStartupState(STARTUP_STATE_WAITING_TO_START);
+					startWithSeek(mLastUrl, tsms);
+					play();
 				}
 				else
 				{
@@ -968,7 +1050,6 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			if (mRenderThread != null) mRenderThread.join();
 		} catch (InterruptedException e1) {
 			// TODO Auto-generated catch block
-			e1.printStackTrace();
 		}
 		StopPlayer();
 		ResetPlayer();
@@ -983,7 +1064,6 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			Thread.sleep(1000);
 		} catch (InterruptedException e) {
 			// TODO Auto-generated catch block
-			e.printStackTrace();
 		}
 	}
 	
@@ -1009,6 +1089,21 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	{
 		Log.i("PlayerViewController.setStartupState", "Old State=" + getStartupStateText(mStartupState) + " New State=" + getStartupStateText(newState));
 		mStartupState = newState;
+	}
+	
+	
+	/*
+	 * startWithSeek
+	 * 
+	 * starts a video and causes a seek into it (used from the seek method when video is stopped)
+	 */
+	private int mSeekToMS = 0;
+	private boolean mUseSeekToMS = false;
+	private void startWithSeek(String url, int seekToMS)
+	{
+		mUseSeekToMS = true;
+		mSeekToMS = seekToMS;
+		setVideoUrl(url);
 	}
 	
 	public void setVideoUrl(String url) {
@@ -1106,6 +1201,8 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			} );
 		}
 	}
+	
+
 	
 	@Override
 	public void registerPlayheadUpdate(OnPlayheadUpdateListener listener) {
@@ -1526,7 +1623,8 @@ public class HLSPlayerViewController extends RelativeLayout implements
                 int state = GetState();
                 if (state == STATE_PLAYING
                         || state == STATE_FOUND_DISCONTINUITY
-                        || state == STATE_WAITING_FOR_DATA) {
+                        || state == STATE_WAITING_FOR_DATA) 
+                {
 
                     // Trigger next frame in native.
                     int rval = 0;
@@ -1544,45 +1642,49 @@ public class HLSPlayerViewController extends RelativeLayout implements
                     if (rval >= 0) { mTimeMS = rval; /* Log.i("RunThread", "mTimeMS = " + mTimeMS); */ }
                     if (rval < 0 && state != lastState)
                     {
-                        Log.i("videoThread", "State Changed -- NextFrame() returned " + rval + " : state = " +
-                                (state == STATE_PLAYING ? "STATE_PLAYING" :
-                                (state == STATE_FOUND_DISCONTINUITY ? "STATE_FOUND_DISCONTINUITY" :
-                                (state == STATE_WAITING_FOR_DATA ? "STATE_WAITING_FOR_DATA" : "UNKNOWN STATE"))));
+                        Log.i("videoThread", "State Changed -- NextFrame() returned " + rval + " : state = " + getStateString(state));
                     }
                     lastState = state;
 
                     // Stop if we hit end of stream.
-                    if (rval == -1 && noMoreSegments) currentController.stop();
-
-                    // Process discontinuities.
-                    if (rval == -1013) // INFO_DISCONTINUITY
-                    {
-                        Log.i("videoThread", "Ran into a discontinuity (INFO_DISCONTINUITY)");
-                        HandleFormatChange();
-                    }
+                    if (rval == -1 && noMoreSegments)
+                	{
+                    	Log.i("videoThread", "rval = -1 && noMoreSegments = true. Player State = " + getStateString(state));
+                		currentController.internalStop();
+                	}
                     else
                     {
-                        // Otherwise, we can handle playhead updates.
-                        if (lastTimeStamp != mTimeMS)
-                        {
-                            postPlayheadUpdate(mTimeMS);
-                            lastTimeStamp = mTimeMS;
-                        }
-                    }
 
-                    // Trigger any subtitles for the time we just processed.
-                    if (mSubtitleHandler != null)
-                    {
-                        double timeSecs = ( (double)mTimeMS / 1000.0);
-                        Vector<TextTrackCue> cues = mSubtitleHandler.update(timeSecs, mSubtitleLanguage);
-                        if (cues != null && mSubtitleTextListener != null)
-                        {
-                            for (int i = 0; i < cues.size(); ++i)
-                            {
-                                TextTrackCue cue = cues.get(i);
-                                postTextTrackText(cue.startTime, cue.endTime - cue.startTime, cue.lineAlignment, cue.text);
-                            }
-                        }
+	                    // Process discontinuities.
+	                    if (rval == -1013) // INFO_DISCONTINUITY
+	                    {
+	                        Log.i("videoThread", "Ran into a discontinuity (INFO_DISCONTINUITY)");
+	                        HandleFormatChange();
+	                    }
+	                    else
+	                    {
+	                        // Otherwise, we can handle playhead updates.
+	                        if (lastTimeStamp != mTimeMS)
+	                        {
+	                            postPlayheadUpdate(mTimeMS);
+	                            lastTimeStamp = mTimeMS;
+	                        }
+	                    }
+	
+	                    // Trigger any subtitles for the time we just processed.
+	                    if (mSubtitleHandler != null)
+	                    {
+	                        double timeSecs = ( (double)mTimeMS / 1000.0);
+	                        Vector<TextTrackCue> cues = mSubtitleHandler.update(timeSecs, mSubtitleLanguage);
+	                        if (cues != null && mSubtitleTextListener != null)
+	                        {
+	                            for (int i = 0; i < cues.size(); ++i)
+	                            {
+	                                TextTrackCue cue = cues.get(i);
+	                                postTextTrackText(cue.startTime, cue.endTime - cue.startTime, cue.lineAlignment, cue.text);
+	                            }
+	                        }
+	                    }
                     }
 
                     // Give other things a shot at the CPU.
@@ -1597,7 +1699,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
                 else if (state == STATE_CUE_STOP)
                 {
                     // We're done playing.
-                    stop();
+                    internalStop();
                 }
                 else
                 {
