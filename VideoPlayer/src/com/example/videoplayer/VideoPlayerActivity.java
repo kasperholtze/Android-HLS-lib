@@ -57,6 +57,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	private final boolean debugAutostartVideo = false;
 	
 	private SeekBar seekBar;
+	private boolean seekBarTouched = false;
 	
 	private int timeWindowDuration = 0;
 
@@ -150,6 +151,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 			public void onStartTrackingTouch(SeekBar seekBar)
 			{
 				// TODO Auto-generated method stub
+				seekBarTouched = true;
 				
 			}
 
@@ -161,7 +163,8 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 					int timeWindowStart = playerView.getPlaybackWindowStartTime();
 					playerView.setVisibility(View.VISIBLE);
 	    			playerView.seek(timeWindowStart + (progress * 1000));
-				}			
+				}
+				seekBarTouched = false;
 			}
         });
         
@@ -649,7 +652,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 		timeStampText = "Time: " + msec + " Duration: " + duration + " Start: " + startTime + "\n";
 		//Log.i("OnPlayheadUpdated", "Time = " + msec);
 
-		if (playerView != null) seekBar.setProgress((msec - playerView.getPlaybackWindowStartTime()) / 1000);
+		if (playerView != null && !seekBarTouched) seekBar.setProgress((msec - playerView.getPlaybackWindowStartTime()) / 1000);
 		updateDebugText();
 	}
 
