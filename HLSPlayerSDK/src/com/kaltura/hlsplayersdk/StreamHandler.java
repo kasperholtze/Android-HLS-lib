@@ -119,6 +119,7 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 		
 		public BestEffortRequest(ManifestSegment seg, int segType)
 		{
+			Log.i("BestEffortRequest", "Making Best Effort Request for segment: " + seg);
 			segment = seg;
 			
 			type = segType;
@@ -201,7 +202,7 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 				continue;
 			
 			segments.get(i).startTime = startTimeWitnesses.get(segments.get(i).uri);
-			Log.i("StreamHandler.updateSegmentTimes", "Sentinal Segment=" + segments.get(i));
+			//Log.i("StreamHandler.updateSegmentTimes", "Sentinal Segment=" + segments.get(i));
 			setSegments[i] = 1;
 		}
 		
@@ -1255,10 +1256,6 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 
 	private SegmentCachedListener bestEffortListener = new SegmentCachedListener()
 	{
-		
-
-		
-		
 		@Override
 		public void onSegmentCompleted(String [] uris)
 		{
@@ -1331,6 +1328,7 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 		@Override
 		public void onSegmentFailed(String uri, int errorCode)
 		{
+			Log.i("StreamHandler.bestEffortListener.onSegmentFailed", "Failed for URL[0]: " + uri + " _bestEffortRequests count = " + _bestEffortRequests.size());
 			// TODO: Not sure what to do here, yet...
 			synchronized(_bestEffortRequests)
 			{
