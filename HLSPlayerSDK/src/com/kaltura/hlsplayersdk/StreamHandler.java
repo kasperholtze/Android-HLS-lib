@@ -149,9 +149,20 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 	private List<BestEffortRequest> _bestEffortRequests = new ArrayList<BestEffortRequest>(); // Active best effort requests
 
 
-	public StreamHandler(ManifestParser parser)
+	public StreamHandler(ManifestParser parser, int initialQuality)
 	{
 		baseManifest = parser;
+		if (initialQuality != 0)
+		{
+			if (baseManifest.streams.size() > 0 && initialQuality < baseManifest.streams.size())
+			{
+				ManifestParser p = getManifestForQuality(lastQuality);
+				p.quality = initialQuality;
+				lastQuality = initialQuality;
+			}
+			// else, lastQuality will be 0
+		}
+		
 		for (int i = 0; i < baseManifest.playLists.size(); ++i)
 		{
 			ManifestPlaylist mp = baseManifest.playLists.get(i);
