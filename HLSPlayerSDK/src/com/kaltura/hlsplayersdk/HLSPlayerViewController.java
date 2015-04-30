@@ -68,6 +68,10 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	private final int STATE_WAITING_FOR_DATA = 7;
 	private final int STATE_CUE_STOP = 8;
 	
+	//Other constants
+	private final int endOfStreamSeekDistance = 2000;
+
+	
 	private String getStateString(int state)
 	{
 		String ss = "STATE_UNKNOWN";
@@ -989,9 +993,9 @@ public class HLSPlayerViewController extends RelativeLayout implements
 
 		int tsms = targetSeekMS;
 		if (mStreamHandler != null && mStreamHandler.streamEnds() && 
-				tsms > (startTime + duration - 2000) )
+				tsms > (startTime + duration - endOfStreamSeekDistance) )
 		{
-			tsms = getPlaybackWindowStartTime() + getDuration() - 2000;
+			tsms = getPlaybackWindowStartTime() + getDuration() - endOfStreamSeekDistance;
 		}
 		return tsms;
 	}
@@ -999,7 +1003,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	public void seek(final int msec, final boolean notify) {
 
 		targetSeekSet = true;
-        targetSeekMS = msec;
+		targetSeekMS = msec;
 
 		postToInterfaceThread( new Runnable() {
 			public void run()

@@ -100,7 +100,7 @@ public class SegmentCacheEntry
 		sci.downloadStartTime = System.currentTimeMillis();
 		Log.i("SegmentCacheEntry", "Requesting: " + sci.uri );
 		
-		HLSSegmentCache.postToCacheRequstThread( new Runnable()
+		HLSSegmentCache.postToCacheRequestThread( new Runnable()
 		{
 			@Override
 			public void run() {

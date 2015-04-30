@@ -202,7 +202,6 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 				continue;
 			
 			segments.get(i).startTime = startTimeWitnesses.get(segments.get(i).uri);
-			//Log.i("StreamHandler.updateSegmentTimes", "Sentinal Segment=" + segments.get(i));
 			setSegments[i] = 1;
 		}
 		

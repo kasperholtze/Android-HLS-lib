@@ -646,7 +646,7 @@ public static String bytesToHex(ByteBuffer bytes) {
 		return (getCacheRequestThread() != null) ? getCacheRequestThread().getHandler() : null;
 	}
 	
-	static void postToCacheRequstThread(Runnable runnable)
+	static void postToCacheRequestThread(Runnable runnable)
 	{
 		Handler handler = getCacheRequestThreadHandler();
 		if (handler != null)
@@ -657,6 +657,7 @@ public static String bytesToHex(ByteBuffer bytes) {
 	
 	public static void interruptCacheThread()
 	{
+		Log.i("HLS Cache", "Requesting cache thread interrupt.");
 		if (mCacheRequestThread != null)
 		{
 			mCacheRequestThread.interrupt();
