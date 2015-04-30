@@ -546,7 +546,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 				public void run() {
 
 					Log.i("VideoPlayer UI", " -----> Play " + mLastUrl);
-		            setVideoUrl(mLastUrl, true);
+		            setVideoUrl(mLastUrl, true, mInitialQualityLevel);
 		            if (mInitialPlayState == STATE_PLAYING || mInitialPlayState == STATE_PAUSED) // The pause will happen immediately after playback resumes in initiatePlay()
 		            	play();
 				}
@@ -594,8 +594,10 @@ public class HLSPlayerViewController extends RelativeLayout implements
 
         noMoreSegments = false;
 		Log.i(this.getClass().getName() + ".onParserComplete", "Entered");
-		mStreamHandler = new StreamHandler(parser);
-		ManifestParser p = mStreamHandler.getManifestForQuality(0);
+		mStreamHandler = new StreamHandler(parser, mQualityLevel);
+		mQualityLevel = mStreamHandler.lastQuality; // Make sure that our quality levels match, as the streamhandler might not find the asked for quality level
+		
+		ManifestParser p = mStreamHandler.getManifestForQuality(mQualityLevel);
 		StreamHandler.EDGE_BUFFER_SEGMENT_COUNT = p.segments.size() - edgeBufferSegmentCount > 0 ? edgeBufferSegmentCount : p.segments.size() - 1; // prevent this from being larger than the number of available segments
 
 		setBufferTime(mTimeToBuffer);
@@ -636,7 +638,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 
 		double startTime = StreamHandler.USE_DEFAULT_START; // This is a trigger to let getFileForTime know to start a live stream
 		int subtitleIndex = 0;
-		int qualityLevel = mQualityLevel = 0;
+		int qualityLevel = mQualityLevel;
 		int textTrackIndex = mSubtitleHandler.hasSubtitles() ? mSubtitleHandler.getDefaultLanguageIndex() : 0;
 		if (mRestoringState)
 		{
@@ -685,6 +687,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		}
 
 		postQualityTracksList(mStreamHandler.getQualityTrackList(), 0);
+		postQualityTrackSwitchingEnd(mQualityLevel);
 
 
 		if (seg.altAudioSegment != null)
@@ -986,6 +989,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		seek(msec, true);
 	}
 	
+	
 	private int getTargetSeekMS()
 	{
 		int startTime = getPlaybackWindowStartTime();
@@ -1127,15 +1131,15 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	{
 		mUseSeekToMS = true;
 		mSeekToMS = seekToMS;
-		setVideoUrl(url);
+		setVideoUrl(url, false, mQualityLevel);
 	}
 	
 	public void setVideoUrl(String url)
 	{
-		setVideoUrl(url, false);
+		setVideoUrl(url, false, 0);
 	}
 	
-	private void setVideoUrl(String url, final boolean resuming) {
+	private void setVideoUrl(String url, final boolean resuming, final int initialQualityLevel) {
 		Log.i("PlayerView.setVideoUrl", url);
 
         final HLSPlayerViewController self = this;
@@ -1161,6 +1165,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
                 targetSeekMS = 0;
                 targetSeekSet = false;
                 stopAndReset();
+                mQualityLevel = initialQualityLevel;
                 
                 if (!resuming) mRestoringState = false;
 

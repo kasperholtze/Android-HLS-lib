@@ -625,14 +625,14 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 
 	@Override
 	public void onQualitySwitchingStart(int oldTrackIndex, int newTrackIndex) {
-		Log.i("VideoPlayer.onQualitySwitchingStart", "Quaity Changing from  " + oldTrackIndex + " to " + newTrackIndex);
+		Log.i("VideoPlayer.onQualitySwitchingStart", "Quality Changing from  " + oldTrackIndex + " to " + newTrackIndex);
 
 	}
 
 	@Override
 	public void onQualitySwitchingEnd(int newTrackIndex) {
 		curQualityLevel = newTrackIndex;
-		Log.i("VideoPlayer.onQualitySwitchingEnd", "Quaity Changed to " + newTrackIndex);
+		Log.i("VideoPlayer.onQualitySwitchingEnd", "Quality Changed to " + newTrackIndex);
 		quality = "Q:" + (curQualityLevel + 1) + "/" + numQualityTracks;
 		
 
