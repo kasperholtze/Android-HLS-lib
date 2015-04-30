@@ -504,8 +504,16 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		mInitialAudioTrack = sp.getInt("initialaudiotrack", 0);
 		mInitialSubtitleTrack = sp.getInt("initialsubtitletrack", 0);
 		
-		Log.i("HLSPlayerViewController.recoverRelease", "StartupState[" + getStartupStateText(mStartupState) + "] mLastUrl=" + mLastUrl);
+		Log.i("HLSPlayerViewController.recoverRelease", "StartupState[" + getStartupStateText(mStartupState) + "] PlayState[" + getStateString(mInitialPlayState) + "] startingMS["+ mStartingMS+"] mLastUrl=" + mLastUrl);
 
+		// If we're stopped, the starting point should be 0, not where we left off
+		// as STATE_STOPPED means we either haven't started, or have finished watching
+		// the video.
+		if (mInitialPlayState == STATE_STOPPED)
+		{
+			mStartingMS = 0;
+		}
+		
 		if ((mStartingMS > 0 || mStartupState != STARTUP_STATE_WAITING_TO_START) && 
 				(mLastUrl.startsWith("http://") || mLastUrl.startsWith("https://")))
 		{
@@ -532,8 +540,8 @@ public class HLSPlayerViewController extends RelativeLayout implements
 				public void run() {
 
 					Log.i("VideoPlayer UI", " -----> Play " + mLastUrl);
-		            setVideoUrl(mLastUrl);
-		            if (mInitialPlayState == STATE_PLAYING)
+		            setVideoUrl(mLastUrl, true);
+		            if (mInitialPlayState == STATE_PLAYING || mInitialPlayState == STATE_PAUSED) // The pause will happen immediately after playback resumes in initiatePlay()
 		            	play();
 				}
 			});
@@ -1106,7 +1114,12 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		setVideoUrl(url);
 	}
 	
-	public void setVideoUrl(String url) {
+	public void setVideoUrl(String url)
+	{
+		setVideoUrl(url, false);
+	}
+	
+	private void setVideoUrl(String url, final boolean resuming) {
 		Log.i("PlayerView.setVideoUrl", url);
 
         final HLSPlayerViewController self = this;
@@ -1132,6 +1145,8 @@ public class HLSPlayerViewController extends RelativeLayout implements
                 targetSeekMS = 0;
                 targetSeekSet = false;
                 stopAndReset();
+                
+                if (!resuming) mRestoringState = false;
 
                 mLastUrl = lUrl;
 
