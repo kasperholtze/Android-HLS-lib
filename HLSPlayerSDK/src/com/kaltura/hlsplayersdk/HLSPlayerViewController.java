@@ -68,6 +68,10 @@ public class HLSPlayerViewController extends RelativeLayout implements
 	private final int STATE_WAITING_FOR_DATA = 7;
 	private final int STATE_CUE_STOP = 8;
 	
+	//Other constants
+	private final int endOfStreamSeekDistance = 2000;
+
+	
 	private String getStateString(int state)
 	{
 		String ss = "STATE_UNKNOWN";
@@ -146,7 +150,7 @@ public class HLSPlayerViewController extends RelativeLayout implements
 
 	public static String getVersion()
 	{
-		return "v0.0.9";
+		return "v0.0.10";
 	}
 
 	/**
@@ -460,6 +464,8 @@ public class HLSPlayerViewController extends RelativeLayout implements
 			mHTTPResponseThread.interrupt();
 			mHTTPResponseThread = null;
 		}
+		HLSSegmentCache.interruptCacheThread();
+		
 		CloseNativeDecoder();
 		if (mStreamHandler != null)
 		{
@@ -980,37 +986,43 @@ public class HLSPlayerViewController extends RelativeLayout implements
 		seek(msec, true);
 	}
 	
+	private int getTargetSeekMS()
+	{
+		int startTime = getPlaybackWindowStartTime();
+		int duration = getDuration();
+
+		int tsms = targetSeekMS;
+		if (mStreamHandler != null && mStreamHandler.streamEnds() && 
+				tsms > (startTime + duration - endOfStreamSeekDistance) )
+		{
+			tsms = getPlaybackWindowStartTime() + getDuration() - endOfStreamSeekDistance;
+		}
+		return tsms;
+	}
+	
 	public void seek(final int msec, final boolean notify) {
+
+		targetSeekSet = true;
+		targetSeekMS = msec;
+
 		postToInterfaceThread( new Runnable() {
 			public void run()
 			{
                 HLSSegmentCache.cancelAllCacheEvents();
 
-                targetSeekSet = true;
-                targetSeekMS = msec;
 
 				boolean tss = targetSeekSet;
-				int tsms = targetSeekMS;
 				int state = GetState();
-				
-				int startTime = getPlaybackWindowStartTime();
-				int duration = getDuration();
-
-				if (mStreamHandler != null && mStreamHandler.streamEnds() && 
-						tsms > (startTime + duration - 2000) )
-				{
-					tsms = getPlaybackWindowStartTime() + getDuration() - 2000;
-				}
-				
 				
 				if (tss && state != STATE_STOPPED)
 				{
+					int tsms = getTargetSeekMS();
+
 					if (notify) postPlayerStateChange(PlayerStates.SEEKING);
 					targetSeekSet = false;
 					targetSeekMS = 0;
 					if (tsms != StreamHandler.USE_DEFAULT_START)
 					{
-						
 						SeekTo(((double)tsms) / 1000.0f);
 					}
 					else
@@ -1022,6 +1034,10 @@ public class HLSPlayerViewController extends RelativeLayout implements
 					Log.i("PlayerViewController.Seek().Runnable()", "Seeking while player is stopped.");
 					
 					setStartupState(STARTUP_STATE_WAITING_TO_START);
+					
+					int tsms = getTargetSeekMS();
+					targetSeekSet = false;
+					targetSeekMS = 0;
 					startWithSeek(mLastUrl, tsms);
 					play();
 				}

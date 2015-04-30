@@ -14,6 +14,7 @@ import android.util.Log;
 
 import com.kaltura.hlsplayersdk.HLSPlayerViewController;
 import com.kaltura.hlsplayersdk.manifest.ManifestSegment;
+import com.kaltura.hlsplayersdk.HLSUtilityThread;
 import com.loopj.android.http.*;
 
 public class HLSSegmentCache 
@@ -36,6 +37,8 @@ public class HLSSegmentCache
 	public static void resetProgress() { lastBufferPct = -1; }
 	
 	public static Context context = null;
+	
+	private static HLSUtilityThread mCacheRequestThread = null;
 	
 	public static AsyncHttpClient httpClient()
 	{
@@ -151,7 +154,11 @@ public class HLSSegmentCache
 			if(HLSPlayerViewController.currentController != null)
 				context = HLSPlayerViewController.currentController.getContext();
 			if (context == null) Log.e("HLS Cache", "Context is null!!!");
+
 		}
+		
+		if (mCacheRequestThread == null)
+			mCacheRequestThread = new HLSUtilityThread("SegmentCache");
 	}
 	
 	/**
@@ -626,6 +633,36 @@ public static String bytesToHex(ByteBuffer bytes) {
 				oldestSce.clear();
 				oldestSce.removeMe(segmentCache);				
 			}
+		}
+	}
+	
+	private static HLSUtilityThread getCacheRequestThread()
+	{
+		return mCacheRequestThread;
+	}
+	
+	private static Handler getCacheRequestThreadHandler()
+	{
+		return (getCacheRequestThread() != null) ? getCacheRequestThread().getHandler() : null;
+	}
+	
+	static void postToCacheRequestThread(Runnable runnable)
+	{
+		Handler handler = getCacheRequestThreadHandler();
+		if (handler != null)
+		{
+			handler.post(runnable);
+		}
+	}
+	
+	public static void interruptCacheThread()
+	{
+		Log.i("HLS Cache", "Requesting cache thread interrupt.");
+		if (mCacheRequestThread != null)
+		{
+			mCacheRequestThread.interrupt();
+			mCacheRequestThread = null;
+			
 		}
 	}
 }
