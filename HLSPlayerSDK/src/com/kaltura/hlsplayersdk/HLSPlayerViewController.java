@@ -228,6 +228,22 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
 
     private void stopAndReset()
     {
+        // Kill what network traffic that we can
+        if (manifestLoader != null)
+        {
+            manifestLoader.setDownloadEventListener(null);
+            manifestLoader = null;
+        }
+        if (mManifest != null)
+        {
+            Log.i("PlayerViewController.setVideoURL", "Manifest is not NULL. Killing the old one and starting a new one.");
+            mManifest.setOnParseCompleteListener(null);
+            mManifest = null;
+        }
+
+        HLSSegmentCache.cancelAllCacheEvents();
+        HLSSegmentCache.cancelDownloads();
+
         if (mRenderThreadState == THREAD_STATE_RUNNING)
             stopVideoThread = true;
         try {
@@ -293,48 +309,19 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         {
             public void run()
             {
-                int state = GetState();
-                Log.i("HLSPlayerViewController.play", "Trying to play - state=" + getStateString(state));
-                if (state == STATE_PAUSED)
-                {
-                    postToInterfaceThread(new Runnable() {
-                        public void run()
-                        {
-                            Pause(false);
-                            int state = GetState();
-                            if (state == STATE_PAUSED) postPlayerStateChange(PlayerStates.PAUSE);
-                            else if (state == STATE_PLAYING) postPlayerStateChange(PlayerStates.PLAY);
-                        }
-                    });
-                    return;
-                }
+                requestState(FSM_PLAY);
 
-                if (mStartupState == STARTUP_STATE_LOADED)
-                    initiatePlay();
-                else if (mStartupState != STARTUP_STATE_STARTED)
-                    setStartupState(STARTUP_STATE_PLAY_QUEUED);
             }
         });
 
     }
 
     public void pause() {
-        postToInterfaceThread(new Runnable() {
-            public void run() {
-                Pause(true);
-                int state = GetState();
-                if (state == STATE_PAUSED) postPlayerStateChange(PlayerStates.PAUSE);
-                else if (state == STATE_PLAYING) postPlayerStateChange(PlayerStates.PLAY);
-            }
-        });
+        requestState(FSM_PAUSE);
     }
 
     public void stop() {
-        postToInterfaceThread(new Runnable() {
-            public void run() {
-                internalStop();
-            }
-        });
+        requestState(FSM_STOPPED);
     }
 
     public void seek(final int msec)
@@ -644,58 +631,14 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
 
     private void setVideoUrl(String url, final boolean resuming, final int initialQualityLevel) {
         Log.i("PlayerView.setVideoUrl", url);
-
-        final HLSPlayerViewController self = this;
-        final String lUrl = url;
-
-        postToInterfaceThread(new Runnable() {
-            @Override
-            public void run() {
-                if (manifestLoader != null)
-                {
-                    manifestLoader.setDownloadEventListener(null);
-                    manifestLoader = null;
-                }
-                if (mManifest != null)
-                {
-                    Log.i("PlayerViewController.setVideoURL", "Manifest is not NULL. Killing the old one and starting a new one.");
-                    mManifest.setOnParseCompleteListener(null);
-                    mManifest = null;
-                }
-
-                HLSSegmentCache.cancelAllCacheEvents();
-                HLSSegmentCache.cancelDownloads();
-                targetSeekMS = 0;
-                targetSeekSet = false;
-                stopAndReset();
-                mQualityLevel = initialQualityLevel;
-
-                if (!resuming) mRestoringState = false;
-
-                mLastUrl = lUrl;
-
-                postPlayerStateChange(PlayerStates.LOAD);
-
-                // Confirm network is ready to go.
-                if(!isOnline())
-                {
-                    Toast.makeText(getContext(), "Not connnected to network; video may not play.", Toast.LENGTH_LONG).show();
-                }
-
-                setStartupState(STARTUP_STATE_LOADING);
-
-
-                // Incrementing the videoPlayId. This will keep us from starting videos delayed
-                // by slow manifest downloads when the user tries to start a new video (meaning
-                // that we'll only start the latest request once the parsers are finished).
-                ++videoPlayId;
-
-                // Init loading.
-                manifestLoader = new URLLoader("HLSPlayerViewController.setVideoUrl", self, null, videoPlayId);
-                manifestLoader.get(lUrl);
-            }
-        });
-    }
+        
+        mLoadState_urlToLoad = url;
+        mLoadState_resuming = resuming;
+        mLoadState_initialQualityLevel = initialQualityLevel;
+        
+        requestState(FSM_LOAD);
+        
+     }
 
     /**
      * Called when the manifest parser is complete. Once this is done, play can
@@ -859,12 +802,12 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
             return;
         }
 
-        postPlayerStateChange(PlayerStates.START);
-
-        if (mStartupState == STARTUP_STATE_PLAY_QUEUED)
-            initiatePlay();
-        else
-            setStartupState(STARTUP_STATE_LOADED);
+        setStartupState(STARTUP_STATE_LOADED);
+        requestState(FSM_START);
+//        if (mStartupState == STARTUP_STATE_PLAY_QUEUED)
+//            initiatePlay();
+//        else
+//            setStartupState(STARTUP_STATE_LOADED);
     }
 
     @Override
@@ -1192,12 +1135,12 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         seek(mTimeMS, false);
     }
 
-    private int getTargetSeekMS()
+    private int getTargetSeekMS(int seekTargetMS)
     {
         int startTime = getPlaybackWindowStartTime();
         int duration = getDuration();
 
-        int tsms = targetSeekMS;
+        int tsms = seekTargetMS;
         if (mStreamHandler != null && mStreamHandler.streamEnds() && 
                 tsms > (startTime + duration - endOfStreamSeekDistance) )
         {
@@ -1207,52 +1150,10 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     }
 
     private void seek(final int msec, final boolean notify) {
+        mSeekState_notify = notify;
+        mSeekState_seekToMS = msec;
 
-        targetSeekSet = true;
-        targetSeekMS = msec;
-
-        postToInterfaceThread( new Runnable() {
-            public void run()
-            {
-                HLSSegmentCache.cancelAllCacheEvents();
-
-
-                boolean tss = targetSeekSet;
-                int state = GetState();
-
-                if (tss && state != STATE_STOPPED)
-                {
-                    int tsms = getTargetSeekMS();
-
-                    if (notify) postPlayerStateChange(PlayerStates.SEEKING);
-                    targetSeekSet = false;
-                    targetSeekMS = 0;
-                    if (tsms != StreamHandler.USE_DEFAULT_START)
-                    {
-                        SeekTo(((double)tsms) / 1000.0f);
-                    }
-                    else
-                        SeekTo((double)tsms);
-                    if (notify) postPlayerStateChange(PlayerStates.SEEKED);
-                }
-                else if (tss && state == STATE_STOPPED && mRenderThreadState == THREAD_STATE_RUNNING)
-                {
-                    Log.i("PlayerViewController.Seek().Runnable()", "Seeking while player is stopped.");
-
-                    setStartupState(STARTUP_STATE_WAITING_TO_START);
-
-                    int tsms = getTargetSeekMS();
-                    targetSeekSet = false;
-                    targetSeekMS = 0;
-                    startWithSeek(mLastUrl, tsms);
-                    play();
-                }
-                else
-                {
-                    Log.i("PlayerViewController.Seek().Runnable()", "No More Seeks Queued");
-                }
-            }
-        });
+        requestState(FSM_SEEKING);
     }
 
     ////////////////////////////////////////////////////
@@ -1668,7 +1569,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
                     if (rval == -1 && noMoreSegments)
                     {
                         Log.i("videoThread", "rval = -1 && noMoreSegments = true. Player State = " + getStateString(state));
-                        currentController.internalStop();
+                        currentController.requestState(FSM_STOPPED);
                     }
                     else
                     {
@@ -1717,7 +1618,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
                 else if (state == STATE_CUE_STOP)
                 {
                     // We're done playing.
-                    internalStop();
+                    currentController.requestState(FSM_STOPPED);
                 }
                 else
                 {
@@ -1864,5 +1765,353 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     /////////////////////////////////////////////////////////////////////////
     // End Helpers
     /////////////////////////////////////////////////////////////////////////
+
+    /////////////////////////////////////////////////////////////////////////
+    // State Machine
+    /////////////////////////////////////////////////////////////////////////
+
+
+    // State
+    boolean fsm_loaded = false;
+    
+    void setLoaded(boolean value) { fsm_loaded = value; }
+    
+    
+    // State flags
+    boolean haveUrl() { return mLastUrl != null && mLastUrl.length() > 0; }
+    boolean isLoaded() { return (mStartupState == STARTUP_STATE_LOADED || mStartupState == STARTUP_STATE_STARTED); }
+    boolean buffering() { return HLSSegmentCache.isBuffering(); }
+    
+    
+    final int FSM_STOPPED = 0;
+    final int FSM_LOAD = 1;
+    final int FSM_START = 2;
+    final int FSM_PLAY = 3;
+    final int FSM_PAUSE = 4;
+    final int FSM_SEEKING = 5;
+    final int FSM_SEEKED = 6;
+    final int FSM_STATECOUNT = 7;
+
+    int mState = FSM_STOPPED;
+    
+    boolean [] requestedState = new boolean[FSM_STATECOUNT];
+    
+    void requestState(int state)
+    {
+        if (state < 0 || state >= FSM_STATECOUNT) return;
+        
+        requestedState[state] = true;
+        
+        postToInterfaceThread(StateMachineRunnable);
+    }
+    
+    void clearRequest(int state)
+    {
+        if (state < 0 || state >= FSM_STATECOUNT) return;
+        
+        requestedState[state] = false;
+    }
+    
+    void clearRequests()
+    {
+        for (int i = 0; i < FSM_STATECOUNT; ++i)
+            requestedState[i] = false;
+    }
+    
+    void logRequestFlags(String methodName)
+    {
+        String s = "";
+        for (int i = 0; i < requestedState.length; ++i)
+            s += " " + i + "=" + requestedState[i];
+        Log.i("StateMachine", methodName + " State: " + mState + " RequestFlags:" + s + " isLoaded=" + isLoaded());
+    }
+    
+    private boolean flagsSet()
+    {
+        for (int i = 0; i < requestedState.length; ++i)
+            if (requestedState[i]) return true;
+        return false;
+    }
+    
+    private Runnable StateMachineRunnable = new Runnable() {
+        public void run()
+        {
+            updateState();
+        }
+    };
+    
+    
+    void updateState()
+    {
+        logRequestFlags("updateState");
+    	switch (mState)
+    	{
+    	case FSM_STOPPED:
+    	    if (requestedState[FSM_SEEKING] && haveUrl() && isLoaded())
+	        {
+    	        mLoadState_urlToLoad = mLastUrl;
+    	        mLoadState_resuming = false;
+    	        mLoadState_initialQualityLevel = mQualityLevel;
+    	        mStopState_reset = true;
+    	        gotoState(FSM_STOPPED);
+	            gotoState(FSM_LOAD);
+	        }
+    	    else if (requestedState[FSM_LOAD] && ((mLoadState_urlToLoad != null && mLoadState_urlToLoad.length() > 0) || haveUrl())) gotoState(FSM_LOAD);
+    	    else if (requestedState[FSM_START] && haveUrl() && isLoaded()) gotoState(FSM_START);
+    	    else if (requestedState[FSM_START] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD); // We'll get to start, eventually
+    	    else if (requestedState[FSM_PLAY] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD);
+    		break;
+    	case FSM_LOAD:
+    	    if ( requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
+    	    else if ( requestedState[FSM_START] &&  isLoaded() ) gotoState(FSM_START);
+    		break;
+    	case FSM_START:
+    	    if ( requestedState[FSM_PLAY] && isLoaded()) gotoState(FSM_PLAY);  // Note that isloaded should be true, always, if we end up in the start state
+    	    else if ( requestedState[FSM_SEEKING] ) gotoState(FSM_PLAY);       // If we seeked to start, we need to play, first
+    	    else if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
+    		break;
+    	case FSM_PLAY:
+    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
+            else if ( requestedState[FSM_LOAD]) 
+            { 
+                mStopState_reset = true; 
+                gotoState(FSM_STOPPED); // We want to stop first, if we're going to start a new video
+            }
+            else if ( requestedState[FSM_SEEKING] ) gotoState(FSM_SEEKING);
+            else if ( requestedState[FSM_PAUSE] ) gotoState(FSM_PAUSE);
+    	    
+    		break;
+    	case FSM_PAUSE:
+    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
+    	    else if ( requestedState[FSM_LOAD] ) // Must check load before play, as the play state may get set, too, and we need to stop the video instead of playing it
+    	    {
+    	        mStopState_reset = true;
+    	        gotoState(FSM_STOPPED); // We want to stop first, if we're going to start a new video
+    	    }
+    	    else if (requestedState[FSM_PAUSE] ) gotoState(FSM_PLAY);
+    	    else if (requestedState[FSM_PLAY] ) gotoState(FSM_PLAY);
+    	    else if (requestedState[FSM_SEEKING] ) gotoState(FSM_SEEKING);
+    		break;
+    	case FSM_SEEKING:
+    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
+    	    else if ( requestedState[FSM_SEEKED] ) gotoState(FSM_SEEKED);
+    	    else if (isLoaded()) gotoState(FSM_SEEKED);
+    	    else if ( requestedState[FSM_PAUSE] ) gotoState(FSM_PAUSE);
+    		break;
+    	case FSM_SEEKED:
+    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
+    	    if (isLoaded()) gotoState(FSM_PLAY);
+    	    break;
+    	}
+    }
+    
+    void gotoState(int state)
+    {
+        int lastState = mState; // store the previous state, just in case we need it
+        int newState = state;
+        
+        
+        logRequestFlags("gotoState From: " + lastState + " To: " + newState);
+        
+        switch (newState)
+        {
+        case FSM_STOPPED:
+            doStopState();
+            break;
+        case FSM_LOAD:
+            doLoadState();
+            break;
+        case FSM_START:
+            doStartState();
+            break;
+        case FSM_PLAY:
+            doPlayState();
+            break;
+        case FSM_PAUSE:
+            doPauseState();
+            break;
+        case FSM_SEEKING:
+            doSeekState();
+            break;
+        case FSM_SEEKED:
+            doSeekedState();
+            break;
+        }
+        
+        if (flagsSet())
+        {
+            postToInterfaceThread(StateMachineRunnable);
+        }
+    }
+    
+    
+    
+    //**** State Handlers
+    
+    // Stop state Handler   
+    private boolean mStopState_reset = false;
+    void doStopState()
+    {
+        if (mStopState_reset) stopAndReset();
+        else internalStop();
+        mStopState_reset = false;
+        mState = FSM_STOPPED;
+        clearRequest(FSM_STOPPED);
+    }
+    
+    // Start State Handler
+    void doStartState()
+    {
+        mState = FSM_START;
+        clearRequest(FSM_START);
+        postPlayerStateChange(PlayerStates.START);
+        updateState(); // We want to check if we need to start right away
+    }
+    
+    // Load State Handler
+    private boolean mLoadState_resuming = false;
+    private int     mLoadState_initialQualityLevel = 0;
+    private String  mLoadState_urlToLoad = "";
+    void doLoadState()
+    {
+        mState = FSM_LOAD;
+        clearRequest(FSM_LOAD);
+        
+        if (mLoadState_urlToLoad == null || mLoadState_urlToLoad.length() == 0)
+            mLoadState_urlToLoad = mLastUrl;
+        else
+            mLastUrl = mLoadState_urlToLoad;
+
+        final HLSPlayerViewController self = this;
+        final String lUrl = mLastUrl;
+
+        
+        targetSeekMS = 0;
+        targetSeekSet = false;
+        mQualityLevel = mLoadState_initialQualityLevel;
+
+        if (!mLoadState_resuming) mRestoringState = false;
+
+        postPlayerStateChange(PlayerStates.LOAD);
+
+        // Confirm network is ready to go.
+        if(!isOnline())
+        {
+            Toast.makeText(getContext(), "Not connnected to network; video may not play.", Toast.LENGTH_LONG).show();
+        }
+
+        setStartupState(STARTUP_STATE_LOADING);
+
+
+        // Incrementing the videoPlayId. This will keep us from starting videos delayed
+        // by slow manifest downloads when the user tries to start a new video (meaning
+        // that we'll only start the latest request once the parsers are finished).
+        ++videoPlayId;
+
+        // Init loading.
+        manifestLoader = new URLLoader("HLSPlayerViewController.setVideoUrl", self, null, videoPlayId);
+        manifestLoader.get(lUrl);
+        
+        // Resetting these inside here so that we don't accidentally reset them before the thread runs
+        mLoadState_resuming = false;
+        mLoadState_initialQualityLevel = 0;
+        mLoadState_urlToLoad = "";            
+    }
+
+    // Play State Handler
+    void doPlayState()
+    {
+        clearRequest(FSM_PLAY);
+        int state = mState;
+        Log.i("HLSPlayerViewController.play", "Trying to play - state=" + getStateString(state));
+        if (state == FSM_PAUSE)
+        {
+            Pause(false);
+            int nativeState = GetState();
+            if (nativeState == STATE_PAUSED)
+            { 
+                postPlayerStateChange(PlayerStates.PAUSE);
+                mState = FSM_PAUSE;
+            }
+            else if (nativeState == STATE_PLAYING) 
+            {
+                postPlayerStateChange(PlayerStates.PLAY);
+                mState = FSM_PLAY;
+            }
+            return;
+        }
+        
+        if (state == FSM_SEEKED)
+        {
+            mState = FSM_PLAY;
+            return;
+        }
+
+        if (mStartupState == STARTUP_STATE_LOADED)
+        {
+            initiatePlay();
+            mState = FSM_PLAY;
+        }
+        else if (mStartupState != STARTUP_STATE_STARTED)
+            setStartupState(STARTUP_STATE_PLAY_QUEUED);
+    }
+    
+    // Seek State Handler
+    private int mSeekState_seekToMS = 0;
+    private boolean mSeekState_notify = true;
+    void doSeekState()
+    {
+        mState = FSM_SEEKING;
+        clearRequest(FSM_SEEKING);
+        
+        int tsms = getTargetSeekMS(mSeekState_seekToMS);
+
+        if (mSeekState_notify) postPlayerStateChange(PlayerStates.SEEKING);
+
+        if (tsms != StreamHandler.USE_DEFAULT_START)
+        {
+            SeekTo(((double)tsms) / 1000.0f);
+        }
+        else
+            SeekTo((double)tsms);
+        if (mSeekState_notify) postPlayerStateChange(PlayerStates.SEEKED);
+        
+        requestState(FSM_SEEKED);
+    }
+
+    // Seeked State Handler
+    void doSeekedState()
+    {
+        mState = FSM_SEEKED;
+        clearRequest(FSM_SEEKED);
+        updateState(); // This is sort of a layover state
+    }
+    
+    // Pause State Handler
+    void doPauseState()
+    {
+        mState = FSM_PAUSE;
+        clearRequest(FSM_PAUSE);
+        Pause(true);
+
+        // Need to set to the correct state in case the pause attempt failed
+        int state = GetState();
+        if (state == STATE_PAUSED)
+        {
+            mState = FSM_PAUSE;
+            postPlayerStateChange(PlayerStates.PAUSE);
+        }
+        else if (state == STATE_PLAYING) 
+        {
+            mState = FSM_PLAY;
+            postPlayerStateChange(PlayerStates.PLAY);
+        }
+
+    }
+
+    /////////////////////////////////////////////////////////////////////////
+    // End State Machine
+    /////////////////////////////////////////////////////////////////////////
+
 }
 

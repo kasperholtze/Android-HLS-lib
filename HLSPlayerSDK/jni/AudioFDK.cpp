@@ -454,9 +454,15 @@ bool AudioFDK::Stop(bool seeking)
 	// TODO: UPDATE THIS AS NECESSARY IF YOU ADD NEW STATES... If additional states are added to the queue, we might actually
 	// miss when this gets changed. For our purposes here, with stop being the only possible action
 	// at the moment, it will suffice, I think.
+
+	bool logOnce = false;
 	while ( mPlayState != SEEKING && mPlayState != STOPPED)
 	{
-		LOGI("Waiting for state - curState=%s", getStateString(mPlayState));
+		if (!logOnce)
+		{
+			LOGI("Waiting for state - curState=%s", getStateString(mPlayState));
+			logOnce=true;
+		}
 		sched_yield();
 	}
 

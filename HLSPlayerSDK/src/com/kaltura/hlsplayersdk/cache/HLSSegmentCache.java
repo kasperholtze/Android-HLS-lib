@@ -290,6 +290,24 @@ public class HLSSegmentCache
 		return sci.data.length;
 	}
 	
+	public static boolean isBuffering()
+	{
+        synchronized (segmentCache)
+        {
+            Collection<SegmentCacheEntry> values = segmentCache.values();
+
+            for(SegmentCacheEntry v : values)
+            {
+                if (v.isRunning() && v.isWaiting())
+                {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+	}
+	
 	private static long lastTime = System.currentTimeMillis();
 	public static void postProgressUpdate(boolean force)
 	{
