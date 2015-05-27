@@ -1239,7 +1239,7 @@ int HLSPlayer::Update()
 	if (mDataSource != NULL)
 	{
 		int segCount = GetBufferedSegmentCount();
-		LOGI("Segment Count %d, checking buffers...", segCount);
+		LOGV("Segment Count %d, checking buffers...", segCount);
 		if (segCount < SEGMENTS_TO_BUFFER)
 		{
 			RequestNextSegment();

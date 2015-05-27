@@ -490,6 +490,9 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 
         	// Subtitles
         	input.setText("http://olive.fr.globecast.tv/live/disk4/sub/hls_sub/index.m3u8");
+        	
+        	// Bad m3u8 - json content
+        	input.setText("http://apache-testing.dev.kaltura.com/p/1091/sp/109100/playManifest/entryId/0_grxxne94/format/applehttp/protocol/http/uiConfId/15118191/a.m3u8?referrer=aHR0cDovL2V4dGVybmFsdGVzdHMuZGV2LmthbHR1cmEuY29t&playSessionId=7390f388-132f-d7f9-293e-3dd3c2f493f4&responseFormat=jsonp&callback=jQuery111102743672174137676_1432085003434&_=1432085003435");
 
         	playerView.setBufferTime(30);
         	
