@@ -809,10 +809,6 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
 
         setStartupState(STARTUP_STATE_LOADED);
         requestState(FSM_START);
-//        if (mStartupState == STARTUP_STATE_PLAY_QUEUED)
-//            initiatePlay();
-//        else
-//            setStartupState(STARTUP_STATE_LOADED);
     }
 
     @Override
@@ -1777,15 +1773,11 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
 
 
     // State
-    boolean fsm_loaded = false;
-    
-    void setLoaded(boolean value) { fsm_loaded = value; }
-    
     
     // State flags
-    boolean haveUrl() { return mLastUrl != null && mLastUrl.length() > 0; }
-    boolean isLoaded() { return (mStartupState == STARTUP_STATE_LOADED || mStartupState == STARTUP_STATE_STARTED); }
-    boolean buffering() { return HLSSegmentCache.isBuffering(); }
+    private boolean haveUrl() { return mLastUrl != null && mLastUrl.length() > 0; }
+    private boolean isLoaded() { return (mStartupState == STARTUP_STATE_LOADED || mStartupState == STARTUP_STATE_STARTED); }
+    private boolean buffering() { return HLSSegmentCache.isBuffering(); }
     
     
     final int FSM_STOPPED = 0;
@@ -1849,65 +1841,65 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     void updateState()
     {
         logRequestFlags("updateState");
-    	switch (mState)
-    	{
-    	case FSM_STOPPED:
-    	    if (requestedState[FSM_SEEKING] && haveUrl() && isLoaded())
-	        {
-    	        mLoadState_urlToLoad = mLastUrl;
-    	        mLoadState_resuming = false;
-    	        mLoadState_initialQualityLevel = mQualityLevel;
-    	        mStopState_reset = true;
-    	        gotoState(FSM_STOPPED);
-	            gotoState(FSM_LOAD);
-	        }
-    	    else if (requestedState[FSM_LOAD] && ((mLoadState_urlToLoad != null && mLoadState_urlToLoad.length() > 0) || haveUrl())) gotoState(FSM_LOAD);
-    	    else if (requestedState[FSM_START] && haveUrl() && isLoaded()) gotoState(FSM_START);
-    	    else if (requestedState[FSM_START] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD); // We'll get to start, eventually
-    	    else if (requestedState[FSM_PLAY] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD);
-    		break;
-    	case FSM_LOAD:
-    	    if ( requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
-    	    else if ( requestedState[FSM_START] &&  isLoaded() ) gotoState(FSM_START);
-    		break;
-    	case FSM_START:
-    	    if ( requestedState[FSM_PLAY] && isLoaded()) gotoState(FSM_PLAY);  // Note that isloaded should be true, always, if we end up in the start state
-    	    else if ( requestedState[FSM_SEEKING] ) gotoState(FSM_PLAY);       // If we seeked to start, we need to play, first
-    	    else if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
-    		break;
-    	case FSM_PLAY:
-    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
-            else if ( requestedState[FSM_LOAD]) 
-            { 
-                mStopState_reset = true; 
+        switch (mState)
+        {
+        case FSM_STOPPED:
+            if (requestedState[FSM_SEEKING] && haveUrl() && isLoaded())
+            {
+                mLoadState_urlToLoad = mLastUrl;
+                mLoadState_resuming = false;
+                mLoadState_initialQualityLevel = mQualityLevel;
+                mStopState_reset = true;
+                gotoState(FSM_STOPPED);
+                gotoState(FSM_LOAD);
+            }
+            else if (requestedState[FSM_LOAD] && ((mLoadState_urlToLoad != null && mLoadState_urlToLoad.length() > 0) || haveUrl()))                 gotoState(FSM_LOAD);
+            else if (requestedState[FSM_START] && haveUrl() && isLoaded()) gotoState(FSM_START);
+            else if (requestedState[FSM_START] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD); // We'll get to start, eventually
+            else if (requestedState[FSM_PLAY] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD);
+            break;
+        case FSM_LOAD:
+            if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
+            else if (requestedState[FSM_START] && isLoaded()) gotoState(FSM_START);
+            break;
+        case FSM_START:
+            if (requestedState[FSM_PLAY] && isLoaded()) gotoState(FSM_PLAY); // Note that isloaded should be true, always, if we end up in the start state
+            else if (requestedState[FSM_SEEKING]) gotoState(FSM_PLAY); // If we seeked to start, we need to play, first
+            else if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
+            break;
+        case FSM_PLAY:
+            if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
+            else if (requestedState[FSM_LOAD])
+            {
+                mStopState_reset = true;
+                gotoState(FSM_STOPPED); // We want to stop first, if we're going
+                                        // to start a new video
+            }
+            else if (requestedState[FSM_SEEKING]) gotoState(FSM_SEEKING);
+            else if (requestedState[FSM_PAUSE]) gotoState(FSM_PAUSE);
+            break;
+        case FSM_PAUSE:
+            if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
+            else if (requestedState[FSM_LOAD]) // Must check load before play, as the play state may get set, too, and we need to stop the video instead of playing it
+            {
+                mStopState_reset = true;
                 gotoState(FSM_STOPPED); // We want to stop first, if we're going to start a new video
             }
-            else if ( requestedState[FSM_SEEKING] ) gotoState(FSM_SEEKING);
-            else if ( requestedState[FSM_PAUSE] ) gotoState(FSM_PAUSE);
-    	    
-    		break;
-    	case FSM_PAUSE:
-    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
-    	    else if ( requestedState[FSM_LOAD] ) // Must check load before play, as the play state may get set, too, and we need to stop the video instead of playing it
-    	    {
-    	        mStopState_reset = true;
-    	        gotoState(FSM_STOPPED); // We want to stop first, if we're going to start a new video
-    	    }
-    	    else if (requestedState[FSM_PAUSE] ) gotoState(FSM_PLAY);
-    	    else if (requestedState[FSM_PLAY] ) gotoState(FSM_PLAY);
-    	    else if (requestedState[FSM_SEEKING] ) gotoState(FSM_SEEKING);
-    		break;
-    	case FSM_SEEKING:
-    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
-    	    else if ( requestedState[FSM_SEEKED] ) gotoState(FSM_SEEKED);
-    	    else if (isLoaded()) gotoState(FSM_SEEKED);
-    	    else if ( requestedState[FSM_PAUSE] ) gotoState(FSM_PAUSE);
-    		break;
-    	case FSM_SEEKED:
-    	    if ( requestedState[FSM_STOPPED] ) gotoState(FSM_STOPPED);
-    	    if (isLoaded()) gotoState(FSM_PLAY);
-    	    break;
-    	}
+            else if (requestedState[FSM_PAUSE]) gotoState(FSM_PLAY);
+            else if (requestedState[FSM_PLAY]) gotoState(FSM_PLAY);
+            else if (requestedState[FSM_SEEKING]) gotoState(FSM_SEEKING);
+            break;
+        case FSM_SEEKING:
+            if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
+            else if (requestedState[FSM_SEEKED]) gotoState(FSM_SEEKED);
+            else if (isLoaded()) gotoState(FSM_SEEKED);
+            else if (requestedState[FSM_PAUSE]) gotoState(FSM_PAUSE);
+            break;
+        case FSM_SEEKED:
+            if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
+            if (isLoaded()) gotoState(FSM_PLAY);
+            break;
+        }
     }
     
     void gotoState(int state)

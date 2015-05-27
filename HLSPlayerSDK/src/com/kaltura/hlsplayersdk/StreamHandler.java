@@ -1062,9 +1062,9 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 		return null;
 	}
 	
-	private double mDuration = 0.0;
-	public void updateDuration()
-	{
+    private double mDuration = 0.0;
+    public void updateDuration()
+    {
         double accum = 0.0f;
 
         if (baseManifest == null) return;
@@ -1082,11 +1082,11 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 	}
 	
 	// Returns duration in ms
-	public int getDuration()
-	{
-	    if (baseManifest == null) return -1;
-		return (int) (mDuration * 1000);
-	}
+    public int getDuration()
+    {
+        if (baseManifest == null) return -1;
+        return (int) (mDuration * 1000);
+    }
 	
 	public int getTimeWindowStart()
 	{
