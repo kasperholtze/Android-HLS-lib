@@ -77,6 +77,8 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 
 	public ManifestReloader reloader = new ManifestReloader();
 
+	// This constant is passed to getFileForTime as the time argument when the library is starting a stream
+	// and wants to use the default start time (0ms for VoD - near end of stream for live/DVR).
 	public static final int USE_DEFAULT_START = -999;
 
 	public int lastSequence = 0;

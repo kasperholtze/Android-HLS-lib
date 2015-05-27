@@ -1136,6 +1136,12 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         seek(mTimeMS, false);
     }
 
+    /*
+     * getTargetSeekMS takes the target we want and returns a target
+     * that is near the end of the stream if the requested target is too
+     * close to, or at the end of the stream. If the target is fine, the 
+     * seek target will be unmodified.
+     */
     private int getTargetSeekMS(int seekTargetMS)
     {
         int startTime = getPlaybackWindowStartTime();
@@ -1789,7 +1795,17 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     final int FSM_SEEKED = 6;
     final int FSM_STATECOUNT = 7;
 
-    int mState = FSM_STOPPED;
+    private int mState = FSM_STOPPED;
+    
+    void setState(int state)
+    {
+        mState = state;
+    }
+    
+    int getState()
+    {
+        return mState;
+    }
     
     boolean [] requestedState = new boolean[FSM_STATECOUNT];
     
@@ -1841,7 +1857,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     void updateState()
     {
         logRequestFlags("updateState");
-        switch (mState)
+        switch (getState())
         {
         case FSM_STOPPED:
             if (requestedState[FSM_SEEKING] && haveUrl() && isLoaded())
@@ -1904,7 +1920,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     
     void gotoState(int state)
     {
-        int lastState = mState; // store the previous state, just in case we need it
+        int lastState = getState(); // store the previous state, just in case we need it
         int newState = state;
         
         
@@ -1952,14 +1968,14 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         if (mStopState_reset) stopAndReset();
         else internalStop();
         mStopState_reset = false;
-        mState = FSM_STOPPED;
+        setState(FSM_STOPPED);
         clearRequest(FSM_STOPPED);
     }
     
     // Start State Handler
     void doStartState()
     {
-        mState = FSM_START;
+        setState(FSM_START);
         clearRequest(FSM_START);
         postPlayerStateChange(PlayerStates.START);
         updateState(); // We want to check if we need to start right away
@@ -1971,7 +1987,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     private String  mLoadState_urlToLoad = "";
     void doLoadState()
     {
-        mState = FSM_LOAD;
+        setState(FSM_LOAD);
         clearRequest(FSM_LOAD);
         
         if (mLoadState_urlToLoad == null || mLoadState_urlToLoad.length() == 0)
@@ -2019,7 +2035,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     void doPlayState()
     {
         clearRequest(FSM_PLAY);
-        int state = mState;
+        int state = getState();
         Log.i("HLSPlayerViewController.play", "Trying to play - state=" + getStateString(state));
         if (state == FSM_PAUSE)
         {
@@ -2028,26 +2044,26 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
             if (nativeState == STATE_PAUSED)
             { 
                 postPlayerStateChange(PlayerStates.PAUSE);
-                mState = FSM_PAUSE;
+                setState(FSM_PAUSE);
             }
             else if (nativeState == STATE_PLAYING) 
             {
                 postPlayerStateChange(PlayerStates.PLAY);
-                mState = FSM_PLAY;
+                setState(FSM_PLAY);
             }
             return;
         }
         
         if (state == FSM_SEEKED)
         {
-            mState = FSM_PLAY;
+            setState(FSM_PLAY);
             return;
         }
 
         if (mStartupState == STARTUP_STATE_LOADED)
         {
             initiatePlay();
-            mState = FSM_PLAY;
+            setState(FSM_PLAY);
         }
         else if (mStartupState != STARTUP_STATE_STARTED)
             setStartupState(STARTUP_STATE_PLAY_QUEUED);
@@ -2058,7 +2074,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     private boolean mSeekState_notify = true;
     void doSeekState()
     {
-        mState = FSM_SEEKING;
+        setState(FSM_SEEKING);
         clearRequest(FSM_SEEKING);
         
         if (mSeekState_notify) postPlayerStateChange(PlayerStates.SEEKING);
@@ -2079,7 +2095,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     // Seeked State Handler
     void doSeekedState()
     {
-        mState = FSM_SEEKED;
+        setState(FSM_SEEKED);
         clearRequest(FSM_SEEKED);
         if (mSeekState_notify) postPlayerStateChange(PlayerStates.SEEKED);
         updateState(); // This is sort of a layover state
@@ -2088,7 +2104,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     // Pause State Handler
     void doPauseState()
     {
-        mState = FSM_PAUSE;
+        setState(FSM_PAUSE);
         clearRequest(FSM_PAUSE);
         Pause(true);
 
@@ -2096,12 +2112,12 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         int state = GetState();
         if (state == STATE_PAUSED)
         {
-            mState = FSM_PAUSE;
+            setState(FSM_PAUSE);
             postPlayerStateChange(PlayerStates.PAUSE);
         }
         else if (state == STATE_PLAYING) 
         {
-            mState = FSM_PLAY;
+            setState(FSM_PLAY);
             postPlayerStateChange(PlayerStates.PLAY);
         }
 
