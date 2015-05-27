@@ -450,13 +450,17 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     {
         if (mPlayerStateChangeListener != null)
         {
-            post(new Runnable()
+            if (currentController != null)
             {
-                @Override
-                public void run() {
-                    mPlayerStateChangeListener.onStateChanged(state);
-                }
-            });
+                currentController.post(new Runnable()
+                {
+                    
+                    @Override
+                    public void run() {
+                        mPlayerStateChangeListener.onStateChanged(state);
+                    }
+                });
+            }
         }
     }
 
@@ -789,6 +793,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
             mRenderThread.start();
         }
 
+        mStreamHandler.updateDuration();
         postDurationChanged();
     }
 
@@ -1678,7 +1683,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     {
         return (getInterfaceThread() != null) ? getInterfaceThread().getHandler() : null;
     }
-
+    
     /////////////////////////////////////////////////////////////////////////
     // End Threads
     /////////////////////////////////////////////////////////////////////////	
@@ -2064,9 +2069,9 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         mState = FSM_SEEKING;
         clearRequest(FSM_SEEKING);
         
-        int tsms = getTargetSeekMS(mSeekState_seekToMS);
-
         if (mSeekState_notify) postPlayerStateChange(PlayerStates.SEEKING);
+
+        int tsms = getTargetSeekMS(mSeekState_seekToMS);
 
         if (tsms != StreamHandler.USE_DEFAULT_START)
         {
@@ -2074,7 +2079,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         }
         else
             SeekTo((double)tsms);
-        if (mSeekState_notify) postPlayerStateChange(PlayerStates.SEEKED);
+        
         
         requestState(FSM_SEEKED);
     }
@@ -2084,6 +2089,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     {
         mState = FSM_SEEKED;
         clearRequest(FSM_SEEKED);
+        if (mSeekState_notify) postPlayerStateChange(PlayerStates.SEEKED);
         updateState(); // This is sort of a layover state
     }
     

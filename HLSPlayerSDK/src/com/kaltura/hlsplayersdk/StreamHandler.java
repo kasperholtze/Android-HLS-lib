@@ -615,6 +615,7 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 			}
 
 			reloader.start();
+			updateDuration();
 			HLSPlayerViewController.currentController.postDurationChanged();
 		}
 	}
@@ -1061,24 +1062,30 @@ public class StreamHandler implements ManifestParser.ReloadEventListener, Manife
 		return null;
 	}
 	
+	private double mDuration = 0.0;
+	public void updateDuration()
+	{
+        double accum = 0.0f;
+
+        if (baseManifest == null) return;
+
+        Vector<ManifestSegment> segments = getSegmentsForQuality( lastQuality );
+        if (segments.size() > 0)
+        {
+            updateSegmentTimes(segments);
+            int i = segments.size() - 1;
+    
+            accum = (segments.get(i).startTime + segments.get(i).duration) - segments.get(0).startTime;
+        }
+        
+        mDuration = accum;
+	}
+	
 	// Returns duration in ms
 	public int getDuration()
 	{
-		double accum = 0.0f;
-
-		if (baseManifest == null) return -1;
-
-		Vector<ManifestSegment> segments = getSegmentsForQuality( lastQuality );
-		if (segments.size() > 0)
-		{
-			updateSegmentTimes(segments);
-			int i = segments.size() - 1;
-	
-			accum = (segments.get(i).startTime + segments.get(i).duration) - segments.get(0).startTime;
-		}
-
-		return (int) (accum * 1000);
-
+	    if (baseManifest == null) return -1;
+		return (int) (mDuration * 1000);
 	}
 	
 	public int getTimeWindowStart()
