@@ -1820,6 +1820,8 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         
         requestedState[state] = true;
         
+        logRequestFlags("requestState: " + state);
+        
         postToInterfaceThread(StateMachineRunnable);
     }
     
@@ -1878,7 +1880,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
             else if (requestedState[FSM_LOAD] && ((mLoadState_urlToLoad != null && mLoadState_urlToLoad.length() > 0) || haveUrl()))                 gotoState(FSM_LOAD);
             else if (requestedState[FSM_START] && haveUrl() && isLoaded()) gotoState(FSM_START);
             else if (requestedState[FSM_START] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD); // We'll get to start, eventually
-            else if (requestedState[FSM_PLAY] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD);
+            //else if (requestedState[FSM_PLAY] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD);
             break;
         case FSM_LOAD:
             if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
