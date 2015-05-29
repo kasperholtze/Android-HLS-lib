@@ -45,6 +45,8 @@ public:
 	bool UpdateFormatInfo();
 
 	bool ReadUntilTime(double timeSecs);
+
+	int GetState() { return 0; }
 private:
 	void SetTimeStampOffset(double offsetSecs);
 
