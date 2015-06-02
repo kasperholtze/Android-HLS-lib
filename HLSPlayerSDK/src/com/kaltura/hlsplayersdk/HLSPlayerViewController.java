@@ -548,6 +548,8 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     public void postFatalError(final int errorCode, final String errorMessage)
     {
         Log.e("HLSPlayerSDK.FatalError", "(" + errorCode + ")" + errorMessage);
+        mStopState_reset = true;
+        requestState(FSM_STOPPED);
         if (mErrorListener != null)
         {
             post(new Runnable()
@@ -730,6 +732,8 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         {
             postError(OnErrorListener.MEDIA_ERROR_NOT_VALID, "Manifest is not valid. There aren't any segments.");
             Log.w("PlayerViewController", "Manifest is not valid. There aren't any segments. Ending playback.");
+            mStopState_reset = true;
+            requestState(FSM_STOPPED);
             return;
         }
 
@@ -1799,6 +1803,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
     
     void setState(int state)
     {
+        Log.i("StateMachine", "setState: " + state + " was: " + mState);
         mState = state;
     }
     
@@ -1814,6 +1819,8 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         if (state < 0 || state >= FSM_STATECOUNT) return;
         
         requestedState[state] = true;
+        
+        logRequestFlags("requestState: " + state);
         
         postToInterfaceThread(StateMachineRunnable);
     }
@@ -1860,6 +1867,7 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         switch (getState())
         {
         case FSM_STOPPED:
+            if (requestedState[FSM_PAUSE]) clearRequest(FSM_PAUSE); // We don't ever want a pause request to survive the stopped state
             if (requestedState[FSM_SEEKING] && haveUrl() && isLoaded())
             {
                 mLoadState_urlToLoad = mLastUrl;
@@ -1872,11 +1880,16 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
             else if (requestedState[FSM_LOAD] && ((mLoadState_urlToLoad != null && mLoadState_urlToLoad.length() > 0) || haveUrl()))                 gotoState(FSM_LOAD);
             else if (requestedState[FSM_START] && haveUrl() && isLoaded()) gotoState(FSM_START);
             else if (requestedState[FSM_START] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD); // We'll get to start, eventually
-            else if (requestedState[FSM_PLAY] && haveUrl() && !isLoaded()) gotoState(FSM_LOAD);
             break;
         case FSM_LOAD:
             if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
             else if (requestedState[FSM_START] && isLoaded()) gotoState(FSM_START);
+            else if (requestedState[FSM_LOAD])
+            {
+                mStopState_reset = true;
+                gotoState(FSM_STOPPED);
+                gotoState(FSM_LOAD);
+            }
             break;
         case FSM_START:
             if (requestedState[FSM_PLAY] && isLoaded()) gotoState(FSM_PLAY); // Note that isloaded should be true, always, if we end up in the start state
@@ -1908,8 +1921,6 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
         case FSM_SEEKING:
             if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
             else if (requestedState[FSM_SEEKED]) gotoState(FSM_SEEKED);
-            else if (isLoaded()) gotoState(FSM_SEEKED);
-            else if (requestedState[FSM_PAUSE]) gotoState(FSM_PAUSE);
             break;
         case FSM_SEEKED:
             if (requestedState[FSM_STOPPED]) gotoState(FSM_STOPPED);
@@ -1997,6 +2008,8 @@ TextTracksInterface, AlternateAudioTracksInterface, QualityTracksInterface, Segm
 
         final HLSPlayerViewController self = this;
         final String lUrl = mLastUrl;
+
+        stopAndReset();
 
         
         targetSeekMS = 0;

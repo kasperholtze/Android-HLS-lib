@@ -2237,6 +2237,10 @@ void HLSPlayer::Pause(bool pause)
 	{
 		SetState(PAUSED);
 		mAudioPlayer->Pause();
+		while (mAudioPlayer->GetState() == PLAYING)
+		{
+			usleep(1000);
+		}
 	}
 	else if (!pause && GetState() == PAUSED)
 	{

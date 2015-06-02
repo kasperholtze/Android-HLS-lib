@@ -983,3 +983,8 @@ void AudioFDK::SetState(int state, const char* func)
 	LOGI("Changing AudioFDK state from %s to %s in %s", getStateString(mPlayState), getStateString(state), func);
 	mPlayState = state;
 }
+
+int AudioFDK::GetState()
+{
+	return mPlayState;
+}

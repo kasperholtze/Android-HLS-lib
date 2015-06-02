@@ -47,6 +47,9 @@ public:
 	bool UpdateFormatInfo();
 
 	bool ReadUntilTime(double timeSecs);
+
+	int GetState();
+
 private:
 
 	void SetState(int state, const char* func = "");
