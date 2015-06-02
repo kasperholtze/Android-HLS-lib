@@ -29,7 +29,7 @@
 //#define _DEBUG_THREAD
 //#define _TIMING
 //#define _RENDER_DETAILS
-#define _AUDIO_FDK
+//#define _AUDIO_FDK
 
 //#define _BLITTEST
 //#define _FRAME_DUMP 25

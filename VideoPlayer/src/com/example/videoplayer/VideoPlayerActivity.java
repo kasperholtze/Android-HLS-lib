@@ -57,6 +57,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 	private final boolean debugAutostartVideo = false;
 	
 	private SeekBar seekBar;
+	private boolean seekBarTouched = false;
 	
 	private int timeWindowDuration = 0;
 
@@ -150,6 +151,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 			public void onStartTrackingTouch(SeekBar seekBar)
 			{
 				// TODO Auto-generated method stub
+				seekBarTouched = true;
 				
 			}
 
@@ -161,7 +163,8 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 					int timeWindowStart = playerView.getPlaybackWindowStartTime();
 					playerView.setVisibility(View.VISIBLE);
 	    			playerView.seek(timeWindowStart + (progress * 1000));
-				}			
+				}
+				seekBarTouched = false;
 			}
         });
         
@@ -487,7 +490,12 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 
         	// Subtitles
         	input.setText("http://olive.fr.globecast.tv/live/disk4/sub/hls_sub/index.m3u8");
+        	
+        	// Bad m3u8 - json content
+        	input.setText("http://apache-testing.dev.kaltura.com/p/1091/sp/109100/playManifest/entryId/0_grxxne94/format/applehttp/protocol/http/uiConfId/15118191/a.m3u8?referrer=aHR0cDovL2V4dGVybmFsdGVzdHMuZGV2LmthbHR1cmEuY29t&playSessionId=7390f388-132f-d7f9-293e-3dd3c2f493f4&responseFormat=jsonp&callback=jQuery111102743672174137676_1432085003434&_=1432085003435");
 
+        	input.setText("http://apache-testing.dev.kaltura.com/p/1091/sp/109100/playManifest/entryId/0_popae503/format/applehttp/protocol/http/uiConfId/15088771/a.m3u8?referrer=aHR0cDovL2V4dGVybmFsdGVzdHMuZGV2LmthbHR1cmEuY29t&playSessionId=08b465a4-5c74-bbcb-98e8-230caf2302a4");
+        	
         	playerView.setBufferTime(30);
         	
 
@@ -622,14 +630,14 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 
 	@Override
 	public void onQualitySwitchingStart(int oldTrackIndex, int newTrackIndex) {
-		Log.i("VideoPlayer.onQualitySwitchingStart", "Quaity Changing from  " + oldTrackIndex + " to " + newTrackIndex);
+		Log.i("VideoPlayer.onQualitySwitchingStart", "Quality Changing from  " + oldTrackIndex + " to " + newTrackIndex);
 
 	}
 
 	@Override
 	public void onQualitySwitchingEnd(int newTrackIndex) {
 		curQualityLevel = newTrackIndex;
-		Log.i("VideoPlayer.onQualitySwitchingEnd", "Quaity Changed to " + newTrackIndex);
+		Log.i("VideoPlayer.onQualitySwitchingEnd", "Quality Changed to " + newTrackIndex);
 		quality = "Q:" + (curQualityLevel + 1) + "/" + numQualityTracks;
 		
 
@@ -649,7 +657,7 @@ OnProgressListener, OnErrorListener, OnDurationChangedListener  {
 		timeStampText = "Time: " + msec + " Duration: " + duration + " Start: " + startTime + "\n";
 		//Log.i("OnPlayheadUpdated", "Time = " + msec);
 
-		if (playerView != null) seekBar.setProgress((msec - playerView.getPlaybackWindowStartTime()) / 1000);
+		if (playerView != null && !seekBarTouched) seekBar.setProgress((msec - playerView.getPlaybackWindowStartTime()) / 1000);
 		updateDebugText();
 	}
 

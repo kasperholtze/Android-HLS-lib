@@ -72,6 +72,8 @@ public:
 
 	virtual void unload() = 0; // from RefCounted - calls close internally, then deletes our object - do not call directly. Call AudioPlayer->release() instead.
 
+	virtual int GetState() = 0;
+
 };
 
 /*

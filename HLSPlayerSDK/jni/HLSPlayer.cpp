@@ -777,20 +777,43 @@ bool HLSPlayer::CreateAudioPlayer()
 		LOGI("AudioPlayer::Init() succeeded");
 	}
 
+	sp<MetaData> format;
+
+	if (mAudioSource.get())
+		format = mAudioSource->getFormat();
+	else if (mAudioSource23.get())
+		format = mAudioSource->getFormat();
+
+	const char* mime;
+	bool success = format->findCString(kKeyMIMEType, &mime);
+	if (!success)
+	{
+		LOGE("Could not find mime type");
+		return false;
+	}
+	if (strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AAC))
+	{
+		LOGE("Mime Type was not audio/mp4a-latm. Was: %s", mime);
+		PostError(MEDIA_ERROR_UNSUPPORTED, true, "Unsupported audio type. Aborting.");
+		return false;
+	}
+
+
 	LOGI("Creating audio thread");
 	if (pthread_create(&audioThread, NULL, audio_thread_func, (void*)mAudioPlayer  ) != 0)
 		return false;
 
 
 	LOGI("Setting Audio Sources");
+	success = false;
 	if(mAudioSource.get())
-		mAudioPlayer->Set(mAudioSource);
+		success = mAudioPlayer->Set(mAudioSource);
 	else if (mAudioSource23.get())
-		mAudioPlayer->Set23(mAudioSource23);
+		success = mAudioPlayer->Set23(mAudioSource23);
 	else
 		mAudioPlayer->ClearAudioSource();
 
-	return true;
+	return success;
 }
 
 
@@ -1239,7 +1262,7 @@ int HLSPlayer::Update()
 	if (mDataSource != NULL)
 	{
 		int segCount = GetBufferedSegmentCount();
-		LOGI("Segment Count %d, checking buffers...", segCount);
+		LOGV("Segment Count %d, checking buffers...", segCount);
 		if (segCount < SEGMENTS_TO_BUFFER)
 		{
 			RequestNextSegment();
@@ -2237,6 +2260,10 @@ void HLSPlayer::Pause(bool pause)
 	{
 		SetState(PAUSED);
 		mAudioPlayer->Pause();
+		while (mAudioPlayer->GetState() == PLAYING)
+		{
+			usleep(1000);
+		}
 	}
 	else if (!pause && GetState() == PAUSED)
 	{
